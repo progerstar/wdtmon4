@@ -37,7 +37,7 @@ export default function App () {
                 <div className="divider mt-0">{I18n.get('Main')}</div>
                 <TabMain settings={settings} setSettings={updateSettings} setPresentExt={setPresent}/>
                 <div className="divider mt-8">
-                        {I18n.get('Settings')}<input checked={present && showSettings} onChange={()=>{setShowSettings(!showSettings)}} type="checkbox" className="toggle toggle-sm" disabled={!present}/> 
+                        {I18n.get('Settings')}<input checked={present && showSettings} onChange={()=>{setShowSettings(!showSettings)}} type="checkbox" className="toggle toggle-sm mr-2" disabled={!present}/> 
                         Connect<input checked={present && settings.ConEn} onChange={()=>{updateSettings({ConEn: !settings.ConEn})}} type="checkbox" className="toggle toggle-sm" disabled={!present}/> 
                     </div>
                   { showSettings && <TabSettings/> }

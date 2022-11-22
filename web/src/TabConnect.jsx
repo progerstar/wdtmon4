@@ -3,6 +3,9 @@ import React, { useState, useEffect } from "react";
 import { AiOutlineClose } from "react-icons/ai";
 import axios from 'axios';
 import I18n from './I18n';
+import { BiWallet } from "react-icons/bi";
+
+const CLOUD_URL = "https://connect.unitx.pro/"
 
 const sensVariant = [I18n.get("Load"), I18n.get("Temperature")];
 
@@ -12,9 +15,16 @@ export default function TabConnect(props) {
 
     useEffect(()=> {
         if ((settings.ConUID === "")) { return }
-        axios.get('/con/user').then(function (response) {
-                setBalance(response.data.balance);
-        })
+        axios.get('/con/user', { headers: {'id': settings.ConUID} })
+        .then((res) => {
+            setBalance(res.data.balance)
+        }).catch((error) => {
+            console.log(error)
+            if (error.response.status === 402) {
+                setBalance(0)
+            }
+        });    
+
     }, [settings.ConUID]);
 
     const clear =()=>{
@@ -26,9 +36,14 @@ export default function TabConnect(props) {
             <div className="card p-2 mb-4 pr-4 w-full bg-base-100 rounded-xl shadow-xl flex flex-row items-center space-x-8">                
                 <span className="ml-2 blur-sm hover:blur-none">ID: {settings.ConUID}</span>
                 <div className="grow"/>
-                <span>{I18n.get('Balance')}: {balance}</span>
-                <a onClick={()=>{}} className="link link-accent">{I18n.get('Account')}</a>
-                <button onClick={clear} className="btn btn-sm btn-square btn-outline btn-primary">
+                
+                <div className='flex flex-row space-x-3 items-center mr-8 cursor-pointer'>
+                    <BiWallet className='text-xl'/> 
+                    <p>{balance}</p>
+                </div>
+                <a href={CLOUD_URL+settings.ConUID} target="_blank" rel="noreferrer" className="link link-accent">{I18n.get('Account')}</a>
+
+                <button onClick={clear} className="btn btn-xs btn-square btn-outline base-content">
                     <AiOutlineClose/>
                 </button>
             </div>

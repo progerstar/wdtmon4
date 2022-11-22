@@ -40,36 +40,6 @@ var embedDirStatic embed.FS
 
 var startTime = time.Now()
 
-type Settings struct {
-	Net             string
-	NetEn           bool
-	Proc            string
-	ProcEn          bool
-	Diode           bool
-	Pause           bool
-	ConEn           bool
-	ConUID          string
-	ConDev          string
-	ConAlias        string
-	ConAlert        bool
-	ConAlertVal     int
-	ConAlertSens    int
-	ConAlertTimeout int
-}
-
-type Proc struct {
-	Name string
-}
-
-type ConnectState struct {
-	Type       int     `json:"type" form:"type"`
-	Value1     float64 `json:"value1" form:"value1"`
-	Value2     int64   `json:"value2" form:"value2"`
-	Alias      string  `json:"alias,omitempty" form:"alias"`
-	Alert      bool    `json:"alert,omitempty" form:"alert"`
-	Alert_time int     `json:"alert_time,omitempty" form:"alert_time"`
-}
-
 func (s Settings) Write() error {
 	data, err := json.Marshal(s)
 	if err != nil {
@@ -103,13 +73,15 @@ func ping(host string) error {
 	seconds := 5
 	timeOut := time.Duration(seconds) * time.Second
 	conn, err := net.DialTimeout("tcp", host+":80", timeOut)
-	defer conn.Close()
+	if err != nil {
+		conn.Close()
+	}
 	//fmt.Printf("Remote Address : %s \n", conn.RemoteAddr().String())
 	//fmt.Printf("Local Address : %s \n", conn.LocalAddr().String())
 	return err
 }
 
-func perioder(settings *Settings, portName string, mutex *sync.Mutex, active *bool, temp *float64) {
+func perioder(settings *Settings, portName string, mutex *sync.Mutex, active *bool, temp *NullFloat64) {
 	heartbeat := time.Tick(2 * time.Second)
 	connbeat := time.Tick(1 * time.Minute)
 	confirst := true
@@ -119,14 +91,14 @@ func perioder(settings *Settings, portName string, mutex *sync.Mutex, active *bo
 		select {
 		// ...
 		case <-connbeat:
-			if *active == false {
+			if !*active {
 				return
 			}
-			state := ConnectState{Type: 5, Value1: *temp, Value2: 1, Alias: settings.ConAlias}
+			state := ConnectState{Type: 5, Value1: *temp, Value2: 2, Alias: settings.ConAlias}
 			if confirst {
 				confirst = false
 			} else {
-				state.Value2 = 0
+				state.Value2 = 1
 			}
 
 			if settings.ConEn && len(settings.ConUID) > 0 {
@@ -134,7 +106,7 @@ func perioder(settings *Settings, portName string, mutex *sync.Mutex, active *bo
 				stateB, err := json.Marshal(state)
 
 				if err == nil {
-					//fmt.Println("send to connect", CLOUD_URL+"/state/"+settings.ConDev)
+					//fmt.Println("send to connect", CLOUD_URL+"/state/"+settings.ConDev, stateB)
 					req, _ := http.NewRequest("POST", CLOUD_URL+"/state/"+settings.ConDev, bytes.NewBuffer(stateB))
 					req.Header.Add("Content-Type", "application/json")
 					req.Header.Add("Content-Length", strconv.Itoa(len(stateB)))
@@ -171,9 +143,9 @@ func perioder(settings *Settings, portName string, mutex *sync.Mutex, active *bo
 				*active = (sendrecv(portName, mutex, "~U") == "~A")
 				tbuf := sendrecv(portName, mutex, "~G")
 				if n, err := strconv.ParseFloat(tbuf[2:6], 64); err == nil {
-					*temp = n / 10
+					*temp = NullFloat64{n / 10, true}
 				} else {
-					*temp = -273
+					*temp = NullFloat64{0, false}
 				}
 
 			}
@@ -259,13 +231,8 @@ func sendrecv(portName string, mutex *sync.Mutex, cmd string) string {
 }
 
 func main() {
-	log.Println("wdtmon4 started on http://localhost" + PORT)
-	defer func() {
-		log.Println("wdtmon4 stopped")
-	}()
-
 	var SendMutex, SettingsMutex sync.Mutex
-	var temp float64 = -273
+	var temp = NullFloat64{Valid: false}
 	var portName string
 	active := false
 
@@ -284,6 +251,11 @@ func main() {
 		fmt.Println("Usage: wdtmon4 device_port")
 		return
 	}
+
+	log.Println("wdtmon4 started on http://localhost" + PORT)
+	defer func() {
+		log.Println("wdtmon4 stopped")
+	}()
 
 	go perioder(&settings, portName, &SendMutex, &active, &temp)
 
@@ -320,8 +292,8 @@ func main() {
 				return c.SendStatus(fiber.StatusBadRequest)
 			}
 		} else if c.Params("cmd") == "~G" {
-			if temp != -273 {
-				return c.SendString(fmt.Sprintf("%.1f", temp))
+			if temp.Valid {
+				return c.SendString(fmt.Sprintf("%.1f", temp.Float64))
 			} else {
 				return c.SendStatus(fiber.StatusBadRequest)
 			}
@@ -372,7 +344,7 @@ func main() {
 		return c.Send(body)
 	})
 
-	app.Post("/con/user", func(c *fiber.Ctx) error {
+	app.Post("/con/create", func(c *fiber.Ctx) error {
 		client := &http.Client{}
 		req, _ := http.NewRequest("POST", CLOUD_URL+"/user/create", nil)
 		resp, err := client.Do(req)

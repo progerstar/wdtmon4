@@ -106,13 +106,13 @@ export default function TabMain(props) {
         <p className="">{temp}°C</p>
         <a href="/monitor" target="_blank" rel="noreferrer" className="link link-accent">{I18n.get("Monitor")}</a>
         <div className="tooltip tooltip-left" data-tip='Reset'>
-          <button onClick={()=>{ axios.get('/cmd/~T1') }} className='btn btn-outline btn-primary btn-xs' disabled={!present}><GrPowerReset/></button>
+          <button onClick={()=>{ axios.get('/cmd/~T1') }} className='btn btn-outline base-content btn-xs' disabled={!present}><GrPowerReset/></button>
         </div>
         <div className="tooltip tooltip-left" data-tip='Power'>
-          <button onClick={()=>{ axios.get('/cmd/~T2') }} className='btn btn-outline btn-primary btn-xs' disabled={!present}><GrPowerCycle/></button>
+          <button onClick={()=>{ axios.get('/cmd/~T2') }} className='btn btn-outline base-content btn-xs' disabled={!present}><GrPowerCycle/></button>
         </div>
         <div className="tooltip tooltip-left" data-tip='Off'>
-          <button onClick={()=>{ axios.get('/cmd/~T3') }} className='btn btn-outline btn-primary btn-xs' disabled={!present}><GrPowerForceShutdown/></button>
+          <button onClick={()=>{ axios.get('/cmd/~T3') }} className='btn btn-outline base-content btn-xs' disabled={!present}><GrPowerForceShutdown/></button>
         </div>
       </div>
     </div>

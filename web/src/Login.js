@@ -18,15 +18,12 @@ export default function Login(props) {
   }
 
   const create =()=>{
-    axios.get('/con/create').then((res)=> {
+    axios.post('/con/create').then((res)=> {
           setSettings({ConUID: res.data.id})
         })
         .catch(function (error) {
           // handle error
           console.log(error);
-        })
-        .then(function () {
-          // always executed
         });
   }
 
