@@ -1,12 +1,13 @@
 package main
 
 import (
-	"database/sql"
 	"encoding/json"
-	"reflect"
+	"io/ioutil"
+
+	"github.com/datumbrain/nulltypes"
 )
 
-type NullFloat64 sql.NullFloat64
+type NullFloat64 = nulltypes.NullFloat64
 
 type Settings struct {
 	Net             string
@@ -38,33 +39,23 @@ type ConnectState struct {
 	Alert_time int         `json:"alert_time,omitempty" form:"alert_time"`
 }
 
-// MarshalJSON for NullFloat64
-func (nf *NullFloat64) MarshalJSON() ([]byte, error) {
-	if !nf.Valid {
-		return []byte("null"), nil
-	}
-	return json.Marshal(nf.Float64)
-}
-
-// UnmarshalJSON for NullFloat64
-func (nf *NullFloat64) UnmarshalJSON(b []byte) error {
-	err := json.Unmarshal(b, &nf.Float64)
-	nf.Valid = (err == nil)
-	return err
-}
-
-func (nf *NullFloat64) Scan(value interface{}) error {
-	var f sql.NullFloat64
-	if err := f.Scan(value); err != nil {
+// for Settings
+func (s Settings) Write() error {
+	data, err := json.Marshal(s)
+	if err != nil {
 		return err
 	}
-
-	// if nil then make Valid false
-	if reflect.TypeOf(value) == nil {
-		*nf = NullFloat64{f.Float64, false}
-	} else {
-		*nf = NullFloat64{f.Float64, true}
+	err = ioutil.WriteFile(SETTINGS_FILE, data, 0644)
+	if err != nil {
+		return err
 	}
-
 	return nil
+}
+
+func (s *Settings) Read() error {
+	data, err := ioutil.ReadFile(SETTINGS_FILE)
+	if err == nil {
+		err = json.Unmarshal(data, &s)
+	}
+	return err
 }

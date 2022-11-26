@@ -41,7 +41,7 @@ export default function TabConnect(props) {
                     <BiWallet className='text-xl'/> 
                     <p>{balance}</p>
                 </div>
-                <a href={CLOUD_URL+settings.ConUID} target="_blank" rel="noreferrer" className="link link-accent">{I18n.get('Account')}</a>
+                <a href={CLOUD_URL+settings.ConUID} target="_blank" rel="noreferrer" className="link link-accent link-hover">{I18n.get('Account')}</a>
 
                 <button onClick={clear} className="btn btn-xs btn-square btn-outline base-content">
                     <AiOutlineClose/>

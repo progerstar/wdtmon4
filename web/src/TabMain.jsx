@@ -5,7 +5,7 @@ import I18n from './I18n';
 import axios from 'axios';
 import useInterval from './useInterval';
 import ProcDialog from './ProcDialog';
-import { GrPowerReset, GrPowerCycle, GrPowerForceShutdown } from "react-icons/gr";
+import { AiOutlineReload, AiOutlinePoweroff, AiOutlineClose } from "react-icons/ai";
 
 const NODEV = "------------";
 const NOTEMP = "--.--";
@@ -104,15 +104,15 @@ export default function TabMain(props) {
       <div className={"space-x-4 flex flex-row mr-4"}>
         <p className="">{uptime}</p> 
         <p className="">{temp}°C</p>
-        <a href="/monitor" target="_blank" rel="noreferrer" className="link link-accent">{I18n.get("Monitor")}</a>
+        <a href="/monitor" target="_blank" rel="noreferrer" className="link link-accent link-hover">{I18n.get("Monitor")}</a>
         <div className="tooltip tooltip-left" data-tip='Reset'>
-          <button onClick={()=>{ axios.get('/cmd/~T1') }} className='btn btn-outline base-content btn-xs' disabled={!present}><GrPowerReset/></button>
+          <button onClick={()=>{ axios.get('/cmd/~T1') }} className='btn btn-outline btn-square base-content btn-xs' disabled={!present}><AiOutlineReload/></button>
         </div>
         <div className="tooltip tooltip-left" data-tip='Power'>
-          <button onClick={()=>{ axios.get('/cmd/~T2') }} className='btn btn-outline base-content btn-xs' disabled={!present}><GrPowerCycle/></button>
+          <button onClick={()=>{ axios.get('/cmd/~T2') }} className='btn btn-outline btn-square base-content btn-xs' disabled={!present}><AiOutlinePoweroff/></button>
         </div>
         <div className="tooltip tooltip-left" data-tip='Off'>
-          <button onClick={()=>{ axios.get('/cmd/~T3') }} className='btn btn-outline base-content btn-xs' disabled={!present}><GrPowerForceShutdown/></button>
+          <button onClick={()=>{ axios.get('/cmd/~T3') }} className='btn btn-outline btn-square base-content btn-xs' disabled={!present}><AiOutlineClose/></button>
         </div>
       </div>
     </div>
