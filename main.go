@@ -1,19 +1,20 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"os"
+	"strconv"
 
 	"github.com/google/uuid"
 	"github.com/tgoncuoglu/argparse"
 )
 
 const (
-	VERSION       = "0.2"
+	VERSION       = "1.0"
 	SETTINGS_FILE = "settings.json"
 	CLOUD_URL     = "https://connect.unitx.pro"
-	PORT          = ":8000"
 )
 
 func NewSettings() Settings {
@@ -30,6 +31,13 @@ func main() {
 	webEn := params.Flag("w", "web", &argparse.Options{Help: "Enable local web server with interface"})
 	cloud := params.Flag("c", "cloud", &argparse.Options{Help: "Enable cloud connection"})
 	ver := params.Flag("v", "version", &argparse.Options{Help: "Show version and exit"})
+	hport := params.String("p", "hport", &argparse.Options{Help: "Http port", Default: "8000",
+		Validate: func(args []string) error {
+			if n, err := strconv.ParseInt(args[0], 10, 32); err != nil || n < 0 || n > 65535 {
+				return errors.New("port must be a positive integer and less than 65536")
+			}
+			return nil
+		}})
 
 	err := params.Parse(os.Args)
 	if (err != nil) || (*portName == "") {
@@ -57,7 +65,7 @@ func main() {
 
 	if *webEn {
 		go perioder(*cloud, &settings, ser, &active, &t)
-		webserver(&settings, ser, &active, &t)
+		webserver(&settings, ser, &active, &t, *hport)
 	} else {
 		perioder(*cloud, &settings, ser, &active, &t)
 	}

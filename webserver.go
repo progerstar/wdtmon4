@@ -31,8 +31,8 @@ func uptime() time.Duration {
 	return time.Since(startTime)
 }
 
-func webserver(settings *Settings, ch chan string, active *bool, temp *nulltypes.NullFloat64) {
-	log.Println("webserver started on http://localhost" + PORT)
+func webserver(settings *Settings, ch chan string, active *bool, temp *nulltypes.NullFloat64, hport string) {
+	log.Println("webserver started on http://localhost:" + hport)
 
 	var SettingsMutex sync.Mutex
 
@@ -163,5 +163,5 @@ func webserver(settings *Settings, ch chan string, active *bool, temp *nulltypes
 		Browse:     false,
 	}))
 
-	log.Println(app.Listen(PORT))
+	log.Println(app.Listen(":" + hport))
 }
