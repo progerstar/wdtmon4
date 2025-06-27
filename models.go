@@ -2,12 +2,10 @@ package main
 
 import (
 	"encoding/json"
-	"io/ioutil"
+	"os"
 
 	"github.com/datumbrain/nulltypes"
 )
-
-type NullFloat64 = nulltypes.NullFloat64
 
 type Settings struct {
 	Net             string
@@ -27,35 +25,32 @@ type Settings struct {
 }
 
 type Proc struct {
-	Name string
+	Name string `json:"name"`
 }
 
 type ConnectState struct {
-	Type       int         `json:"type" form:"type"`
-	Value1     NullFloat64 `json:"value1,omitempty" form:"value1"`
-	Value2     int64       `json:"value2,omitempty" form:"value2"`
-	Alias      string      `json:"alias,omitempty" form:"alias"`
-	Alert      bool        `json:"alert,omitempty" form:"alert"`
-	Alert_time int         `json:"alert_time,omitempty" form:"alert_time"`
+	Type       int                   `json:"type" form:"type"`
+	Value1     nulltypes.NullFloat64 `json:"value1,omitempty" form:"value1"`
+	Value2     int64                 `json:"value2,omitempty" form:"value2"`
+	Alias      string                `json:"alias,omitempty" form:"alias"`
+	Alert      bool                  `json:"alert,omitempty" form:"alert"`
+	Alert_time int                   `json:"alert_time,omitempty" form:"alert_time"`
 }
 
-// for Settings
-func (s Settings) Write() error {
-	data, err := json.Marshal(s)
+// Write сохраняет настройки в файл
+func (s *Settings) Write() error {
+	data, err := json.MarshalIndent(s, "", "  ")
 	if err != nil {
 		return err
 	}
-	err = ioutil.WriteFile(SETTINGS_FILE, data, 0644)
-	if err != nil {
-		return err
-	}
-	return nil
+	return os.WriteFile(SETTINGS_FILE, data, 0644)
 }
 
+// Read загружает настройки из файла
 func (s *Settings) Read() error {
-	data, err := ioutil.ReadFile(SETTINGS_FILE)
-	if err == nil {
-		err = json.Unmarshal(data, &s)
+	data, err := os.ReadFile(SETTINGS_FILE)
+	if err != nil {
+		return err
 	}
-	return err
+	return json.Unmarshal(data, s)
 }

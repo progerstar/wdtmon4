@@ -7,8 +7,6 @@ import axios from 'axios';
 import I18n from './I18n';
 import Login from './Login';
 
-axios.defaults.baseURL =  `http://${document.location.hostname}:8000`
-
 export default function App () {
   const [ settings, setSettings ] = useState({ ConEn: false, Net: "", NetEn: false, Proc: "", ProcEn: false,
                                                Diode: true, Pause: false, ConUID: "", ConDev: "", ConAlias: "",

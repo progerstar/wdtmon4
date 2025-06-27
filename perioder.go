@@ -2,135 +2,220 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/datumbrain/nulltypes"
 	"github.com/keybase/go-ps"
 )
 
-func ping(host string) error {
-	seconds := 5
-	timeOut := time.Duration(seconds) * time.Second
-	conn, err := net.DialTimeout("tcp", host+":80", timeOut)
-	if err == nil {
-		conn.Close()
-	}
-	//fmt.Printf("Remote Address : %s \n", conn.RemoteAddr().String())
-	//fmt.Printf("Local Address : %s \n", conn.LocalAddr().String())
-	return err
-}
+const (
+	defaultTimeout    = 5 * time.Second
+	heartbeatInterval = 2 * time.Second
+	connbeatInterval  = 5 * time.Minute
+)
 
-func FindProcess(key string) error {
-	err := errors.New("not found")
-	ps, _ := ps.Processes()
-	for i := range ps {
-		if ps[i].Executable() == key {
-			err = nil
-			break
+func ping(hostOrURL string) error {
+	var host string
+
+	if strings.Contains(hostOrURL, "://") {
+		parsedURL, err := url.Parse(hostOrURL)
+		if err != nil {
+			return fmt.Errorf("invalid URL format: %v", err)
 		}
-	}
-	return err
-}
-
-func recvchecker(cmd string) string {
-	switch cmd {
-	case "~U":
-		return "~A"
-	case "~W":
-		return "~F"
-	default:
-		return cmd
-	}
-}
-
-func sendrecv(cmd string, ch chan string) string {
-	ch <- cmd
-	res := <-ch
-	i := strings.Index(res, recvchecker(cmd[:2]))
-	if i > -1 {
-		return res[i:strings.Index(res[i:], "\n")]
+		host = parsedURL.Hostname()
+		if host == "" {
+			return fmt.Errorf("cannot extract hostname from URL: %s", hostOrURL)
+		}
 	} else {
-		return "Err"
+		host = hostOrURL
 	}
+
+	//log.Printf("Pinging host: %s (from input: %s)", host, hostOrURL)
+
+	conn, err := net.DialTimeout("tcp", net.JoinHostPort(host, "80"), defaultTimeout)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	return nil
 }
 
-func consend(uid string, url string, state *ConnectState) error {
-	client := &http.Client{}
-	stateB, err := json.Marshal(state)
-	if err == nil {
-		req, _ := http.NewRequest("POST", url, bytes.NewBuffer(stateB))
-		req.Header.Add("Content-Type", "application/json")
-		req.Header.Add("Content-Length", strconv.Itoa(len(stateB)))
-		req.Header.Add("id", uid)
-		resp, err := client.Do(req)
-		if err == nil {
-			resp.Body.Close()
+func FindProcess(key string) (bool, error) {
+	processes, err := ps.Processes()
+	if err != nil {
+		return false, err
+	}
+
+	for _, p := range processes {
+		if p.Executable() == key {
+			return true, nil
 		}
 	}
-	return err
+	return false, nil
 }
 
-func perioder(cloudEn bool, settings *Settings, ch chan string, active *bool, temp *NullFloat64) {
-	heartbeat := time.Tick(2 * time.Second)
-	connbeat := time.Tick(5 * time.Minute)
-	state := ConnectState{Type: 5, Value1: *temp, Value2: 2, Alias: settings.ConAlias}
+func sendrecv(cmd string, ch chan string) (string, error) {
+	select {
+	case ch <- cmd:
+		res := <-ch
 
-	if cloudEn {
-		if consend(settings.ConUID, CLOUD_URL+"/state/"+settings.ConDev, &state) == nil {
+		if res == "" {
+			return "", errors.New("empty response")
+		}
+		return strings.TrimSpace(res), nil
+
+	case <-time.After(2 * time.Second):
+		return "", errors.New("channel timeout")
+	}
+}
+
+func consend(ctx context.Context, uid, url string, state *ConnectState, client *http.Client) error {
+	if client == nil {
+		client = &http.Client{Timeout: defaultTimeout}
+	}
+
+	stateBytes, err := json.Marshal(state)
+	if err != nil {
+		return err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(stateBytes))
+	if err != nil {
+		return err
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Content-Length", strconv.Itoa(len(stateBytes)))
+	req.Header.Set("id", uid)
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return errors.New("server returned error status: " + resp.Status)
+	}
+
+	return nil
+}
+
+func parseTemperature(tbuf string) nulltypes.NullFloat64 {
+	if strings.Contains(tbuf, "EEEE") {
+		return nulltypes.NullFloat64{Float64: 0, Valid: false}
+	}
+
+	if len(tbuf) >= 6 && strings.HasPrefix(tbuf, "~G") {
+		tempStr := tbuf[2:6]
+		if n, err := strconv.ParseFloat(tempStr, 64); err == nil {
+			temp := n / 10
+			return nulltypes.NullFloat64{Float64: temp, Valid: true}
+		} else {
+			log.Printf("parseTemperature: failed to parse temperature '%s': %v", tempStr, err)
+		}
+	}
+
+	log.Printf("parseTemperature: invalid format '%s'", tbuf)
+	return nulltypes.NullFloat64{Float64: 0, Valid: false}
+}
+
+func perioder(ctx context.Context, cloudEn bool, settings *Settings, ch chan string, active *bool, temp *nulltypes.NullFloat64) {
+	log.Println("Perioder started")
+	defer log.Println("Perioder stopped")
+
+	client := &http.Client{Timeout: defaultTimeout}
+
+	state := ConnectState{
+		Type:   5,
+		Value1: *temp,
+		Value2: 2,
+		Alias:  settings.ConAlias,
+	}
+
+	heartbeat := time.NewTicker(heartbeatInterval)
+	defer heartbeat.Stop()
+	connbeat := time.NewTicker(connbeatInterval)
+	defer connbeat.Stop()
+
+	if cloudEn && len(settings.ConUID) > 0 {
+		if err := consend(ctx, settings.ConUID, CLOUD_URL+"/state/"+settings.ConDev, &state, client); err == nil {
 			state.Value2 = 1
+		} else {
+			log.Printf("Initial cloud send failed: %v", err)
 		}
 	}
 
 	for {
-		time.Sleep(1 * time.Second)
 		select {
-		case <-connbeat:
+		case <-ctx.Done():
+			log.Println("Perioder shutting down...")
+			return
+		case <-connbeat.C:
 			if settings.ConEn && cloudEn && *active && len(settings.ConUID) > 0 {
 				state.Value1 = *temp
-				if consend(settings.ConUID, CLOUD_URL+"/state/"+settings.ConDev, &state) == nil {
+				if err := consend(ctx, settings.ConUID, CLOUD_URL+"/state/"+settings.ConDev, &state, client); err != nil {
+					log.Printf("Cloud send failed: %v", err)
+					state.Value2 = 0
+				} else {
 					state.Value2 = 1
 				}
 			}
 
-		case <-heartbeat:
-			res := true
-			if settings.NetEn && (len(settings.Net) != 0) {
-				if ping(settings.Net) != nil {
-					res = false
-					*active = false
-				}
-			}
+		case <-heartbeat.C:
+			isActive := true
 
-			if res && settings.ProcEn && (len(settings.Proc) != 0) {
-				if FindProcess(settings.Proc) != nil {
-					res = false
-					*active = false
-				}
-			}
-
-			if res && settings.Pause {
-				res = false
-				*active = false
-			}
-
-			if res {
-				*active = (sendrecv("~U", ch) == "~A")
-				tbuf := sendrecv("~G", ch)
-
-				if len(tbuf) == 6 {
-					if n, err := strconv.ParseFloat(tbuf[2:6], 64); err == nil {
-						*temp = NullFloat64{n / 10, true}
-					} else {
-						*temp = NullFloat64{0, false}
-					}
+			if settings.NetEn && len(settings.Net) > 0 {
+				log.Printf("Checking network connectivity to %s", settings.Net)
+				if err := ping(settings.Net); err != nil {
+					log.Printf("Network check failed for %s: %v", settings.Net, err)
+					isActive = false
 				} else {
-					*temp = NullFloat64{0, false}
+					log.Printf("Network check passed for %s", settings.Net)
 				}
+			}
+
+			if isActive && settings.ProcEn && len(settings.Proc) > 0 {
+				if found, err := FindProcess(settings.Proc); !found || err != nil {
+					if err != nil {
+						log.Printf("Process check error: %v", err)
+					} else {
+						log.Printf("Process %s not found", settings.Proc)
+					}
+					isActive = false
+				}
+			}
+
+			if isActive && settings.Pause {
+				log.Printf("Pause mode enabled, setting inactive")
+				isActive = false
+			}
+
+			if isActive {
+				resp, err := sendrecv("~U", ch)
+				*active = err == nil && resp == "~A"
+
+				if *active {
+					if tbuf, err := sendrecv("~G", ch); err == nil {
+						*temp = parseTemperature(tbuf)
+					} else {
+						log.Printf("Temperature read failed: %v", err)
+						*temp = nulltypes.NullFloat64{Float64: 0, Valid: false}
+					}
+				}
+			} else {
+				*active = false
+				*temp = nulltypes.NullFloat64{Float64: 0, Valid: false}
 			}
 		}
 	}
