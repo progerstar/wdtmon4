@@ -95,7 +95,8 @@ export default function TabSettings() {
             return;
         }
         const tempHex = tempVal.toString(16).toUpperCase().padStart(2,'0');
-        const s = `${t1.toString(16)}${t2.toString(16)}${t3.toString(16)}${t4.toString(16)}${t5.toString(16)}${ch1}${ch2}${limit.toString(16)}${inp}${tempHex}`;
+        const formatT = (tX) => Number(tX).toString(16).toUpperCase();
+        const s = `${formatT(t1)}${formatT(t2)}${formatT(t3)}${formatT(t4)}${formatT(t5)}${ch1}${ch2}${formatT(limit)}${inp}${tempHex}`;
         axios.get('/cmd/~W'+s).then((res)=>{
             if (res.data === 'Error') {
                 showToast(I18n.get('Error'));
