@@ -7,7 +7,7 @@ import toast, { Toaster } from 'react-hot-toast';
 const renderTxSelect =(cur, mul, txt, cb)=> {
     if (cur === null) return null;
     const val = cur*mul+' '+txt;
-    const rangeList = [...Array(15).keys()].map((el)=>el*mul+' '+txt);
+    const rangeList = [...Array(16).keys()].map((el)=>el*mul+' '+txt);
     const rows = rangeList.map((el,i)=>{ return <option key={i}>{el}</option> });
     return <select value={val} onChange={(e)=>{cb(rangeList.indexOf(e.target.value))}} className="select select-ghost w-full max-w-xs select-xs">
                 {rows}
@@ -16,8 +16,8 @@ const renderTxSelect =(cur, mul, txt, cb)=> {
 
 const renderLimitSelect =(cur, cb)=> {
     if (cur === null) return null;
-    const rows = [...Array(15).keys()].map(el=>{ return <option key={el}>{el}</option> });
-    return <select value={cur} onChange={(e)=>{cb(e.target.value.toString(16))}} className="select select-ghost w-full max-w-xs select-xs">
+    const rows = [...Array(16).keys()].map(el=>{ return <option key={el}>{el}</option> });
+    return <select value={cur} onChange={(e)=>{cb(parseInt(e.target.value, 10))}} className="select select-ghost w-full max-w-xs select-xs">
                 {rows}
             </select>
 };
@@ -68,11 +68,11 @@ export default function TabSettings() {
                 setT3(parseInt(cmd[4], 16));
                 setT4(parseInt(cmd[5], 16));
                 setT5(parseInt(cmd[6], 16));
-                setCh1(parseInt(cmd[7]));
-                setCh2(parseInt(cmd[8]));
+                setCh1(parseInt(cmd[7], 10));
+                setCh2(parseInt(cmd[8], 10));
                 setLimit(parseInt(cmd[9], 16));
-                setInp(parseInt(cmd[10]));
-                setTemp(parseInt(parseInt(cmd.slice(11, 13))));
+                setInp(parseInt(cmd[10], 10));
+                setTemp(parseInt(cmd.slice(11, 13), 16));
             }
         }
     }
@@ -87,8 +87,15 @@ export default function TabSettings() {
     }
 
     const write =()=> {
-        if (temp>255) {showToast(I18n.get('Wrong parameters')); return;}
-        const s = `${t1.toString(16)}${t2.toString(16)}${t3.toString(16)}${t4.toString(16)}${t5.toString(16)}${ch1}${ch2}${limit.toString(16)}${inp}${temp.toString().padStart(2,'0')}`;
+        const missing = [t1, t2, t3, t4, t5, ch1, ch2, limit, inp].some((v)=>v === null || v === undefined);
+        if (missing) {showToast(I18n.get('Wrong parameters')); return;}
+        const tempVal = Number(temp);
+        if (!Number.isFinite(tempVal) || tempVal < 0 || tempVal > 255) {
+            showToast(I18n.get('Wrong parameters'));
+            return;
+        }
+        const tempHex = tempVal.toString(16).toUpperCase().padStart(2,'0');
+        const s = `${t1.toString(16)}${t2.toString(16)}${t3.toString(16)}${t4.toString(16)}${t5.toString(16)}${ch1}${ch2}${limit.toString(16)}${inp}${tempHex}`;
         axios.get('/cmd/~W'+s).then((res)=>{
             if (res.data === 'Error') {
                 showToast(I18n.get('Error'));
@@ -121,12 +128,12 @@ export default function TabSettings() {
 
                     <tr>
                         <td>{I18n.get('Hard reset sequence: hold the "Power" button for')}</td>
-                        <td>{renderTxSelect(t3, 1, I18n.get('min.'), setT3)}</td>
+                        <td>{renderTxSelect(t3, 1, I18n.get('sec.'), setT3)}</td>
                     </tr>
 
                     <tr>
                         <td>{I18n.get('Release, wait')}</td>
-                        <td>{renderTxSelect(t4, 1, I18n.get('min.'), setT4)}</td>
+                        <td>{renderTxSelect(t4, 1, I18n.get('sec.'), setT4)}</td>
                     </tr>
 
                     <tr>
@@ -156,7 +163,7 @@ export default function TabSettings() {
 
                     <tr>
                         <td>{I18n.get('Temperature Threshold')}</td>
-                        <td><input type="number" min={0} max={255} value={temp} onChange={(e)=>{setTemp(e.target.value)}} className="input input-ghost w-full max-w-xs input-xs"/></td>
+                        <td><input type="number" min={0} max={255} value={temp} onChange={(e)=>{setTemp(Number(e.target.value))}} className="input input-ghost w-full max-w-xs input-xs"/></td>
                     </tr>
                 </tbody>
                 </table>
