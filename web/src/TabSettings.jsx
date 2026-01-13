@@ -127,17 +127,17 @@ export default function TabSettings() {
                     </tr>
 
                     <tr>
-                        <td>{I18n.get('Hard reset sequence: hold the "Power" button for')}</td>
+                        <td>{I18n.get('When hard-restarting the PC, hold the "Power" button for')}</td>
                         <td>{renderTxSelect(t3, 1, I18n.get('sec.'), setT3)}</td>
                     </tr>
 
                     <tr>
-                        <td>{I18n.get('Release, wait')}</td>
+                        <td>{I18n.get('When hard-restarting the PC, after powering off, wait for')}</td>
                         <td>{renderTxSelect(t4, 1, I18n.get('sec.'), setT4)}</td>
                     </tr>
 
                     <tr>
-                        <td>{I18n.get('Press the button for')}</td>
+                        <td>{I18n.get('When hard-restarting the PC, after powering off, hold the "Power" button for')}</td>
                         <td>{renderTxSelect(t5, 100, I18n.get('msec.'), setT5)}</td>
                     </tr>
 
