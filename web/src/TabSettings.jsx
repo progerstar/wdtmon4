@@ -31,11 +31,11 @@ const renderChSelect =(cur, cb)=> {
     </select>
 };
 
-const InSelectМalues = [I18n.get("Off"), I18n.get("Input"),I18n.get("Reserved"), I18n.get("Temp.sensor")];
+const InSelectValues = [I18n.get("Off"), I18n.get("Input"),I18n.get("Reserved"), I18n.get("Temp.sensor")];
 const renderInSelect =(cur, cb)=> {
     if (cur === null) return null;
-    const rows = InSelectМalues.map((el, i)=>{ return <option key={i}>{el}</option> });
-    return <select value={InSelectМalues[cur]} onChange={(e)=>{cb(InSelectМalues.indexOf(e.target.value))}} className="select select-ghost w-full max-w-xs select-xs">
+    const rows = InSelectValues.map((el, i)=>{ return <option key={i}>{el}</option> });
+    return <select value={InSelectValues[cur]} onChange={(e)=>{cb(InSelectValues.indexOf(e.target.value))}} className="select select-ghost w-full max-w-xs select-xs">
         {rows}
     </select>
 };
