@@ -31,11 +31,11 @@ const renderChSelect =(cur, cb)=> {
     </select>
 };
 
-const InSelectМalues = [I18n.get("Off"), I18n.get("Input"),I18n.get("Reserved"), I18n.get("Temp.sensor")];
+const InSelectValues = [I18n.get("Off"), I18n.get("Input"),I18n.get("Reserved"), I18n.get("Temp.sensor")];
 const renderInSelect =(cur, cb)=> {
     if (cur === null) return null;
-    const rows = InSelectМalues.map((el, i)=>{ return <option key={i}>{el}</option> });
-    return <select value={InSelectМalues[cur]} onChange={(e)=>{cb(InSelectМalues.indexOf(e.target.value))}} className="select select-ghost w-full max-w-xs select-xs">
+    const rows = InSelectValues.map((el, i)=>{ return <option key={i}>{el}</option> });
+    return <select value={InSelectValues[cur]} onChange={(e)=>{cb(InSelectValues.indexOf(e.target.value))}} className="select select-ghost w-full max-w-xs select-xs">
         {rows}
     </select>
 };
@@ -95,7 +95,8 @@ export default function TabSettings() {
             return;
         }
         const tempHex = tempVal.toString(16).toUpperCase().padStart(2,'0');
-        const s = `${t1.toString(16)}${t2.toString(16)}${t3.toString(16)}${t4.toString(16)}${t5.toString(16)}${ch1}${ch2}${limit.toString(16)}${inp}${tempHex}`;
+        const formatT = (tX) => Number(tX).toString(16).toUpperCase();
+        const s = `${formatT(t1)}${formatT(t2)}${formatT(t3)}${formatT(t4)}${formatT(t5)}${ch1}${ch2}${formatT(limit)}${inp}${tempHex}`;
         axios.get('/cmd/~W'+s).then((res)=>{
             if (res.data === 'Error') {
                 showToast(I18n.get('Error'));
@@ -127,17 +128,17 @@ export default function TabSettings() {
                     </tr>
 
                     <tr>
-                        <td>{I18n.get('Hard reset sequence: hold the "Power" button for')}</td>
+                        <td>{I18n.get('When hard-restarting the PC, hold the "Power" button for')}</td>
                         <td>{renderTxSelect(t3, 1, I18n.get('sec.'), setT3)}</td>
                     </tr>
 
                     <tr>
-                        <td>{I18n.get('Release, wait')}</td>
+                        <td>{I18n.get('When hard-restarting the PC, after powering off, wait for')}</td>
                         <td>{renderTxSelect(t4, 1, I18n.get('sec.'), setT4)}</td>
                     </tr>
 
                     <tr>
-                        <td>{I18n.get('Press the button for')}</td>
+                        <td>{I18n.get('When hard-restarting the PC, after powering off, hold the "Power" button for')}</td>
                         <td>{renderTxSelect(t5, 100, I18n.get('msec.'), setT5)}</td>
                     </tr>
 
