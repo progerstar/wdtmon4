@@ -31,6 +31,18 @@ export default function TabConnect(props) {
         setSettings({ConUID: ""})
     }
 
+    const updateAlertValue = (value) => {
+        if (value === "") {
+            setSettings({ConAlertVal: ""})
+            return;
+        }
+
+        const parsed = parseInt(value, 10);
+        if (!Number.isNaN(parsed)) {
+            setSettings({ConAlertVal: parsed})
+        }
+    }
+
   return ( <div>
     <div>
             <div className="card p-2 mb-4 pr-4 w-full bg-base-100 rounded-xl shadow-xl flex flex-row items-center space-x-8">                
@@ -85,8 +97,8 @@ export default function TabConnect(props) {
                 <div className="form-control">
                     <label className="label cursor-pointer">
                         <span className="label-text">{I18n.get('Value')}</span>
-                        <input type="text" value={settings.ConAlertVal} disabled={!settings.ConAlert} onChange={(e)=>{
-                            setSettings({ConAlertVal: parseInt(e.target.value)})
+                        <input type="text" value={settings.ConAlertVal ?? ""} disabled={!settings.ConAlert} onChange={(e)=>{
+                            updateAlertValue(e.target.value)
                         }} placeholder="Value" className="input input-bordered input-accent input-xs w-full max-w-xs" />
                     </label>
                 </div>

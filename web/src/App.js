@@ -22,11 +22,16 @@ export default function App () {
     }));
   }
 
+  const settingsForPost = (settings) => ({
+    ...settings,
+    ConAlertVal: settings.ConAlertVal === "" ? 0 : settings.ConAlertVal,
+  })
+
   useEffect(() => {
     if (settings.Empty === true) {axios.get('/settings').then((res)=>{
       setSettings(res.data);
     })} else { 
-      axios.post('/settings', settings)
+      axios.post('/settings', settingsForPost(settings))
     }
   }, [settings]);
 
