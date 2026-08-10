@@ -15,6 +15,6 @@ wdtmon4
 settings.json
 web/node_modules
 web/build
-web/package-lock.json
+web/coverage
 
 /.idea/

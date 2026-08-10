@@ -1,6 +1,4 @@
-import './index.css';
-import React from "react";
-import { useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import I18n from './I18n';
 import axios from 'axios';
 import useInterval from './useInterval';
@@ -9,6 +7,27 @@ import { AiOutlineReload, AiOutlinePoweroff, AiOutlineClose } from "react-icons/
 
 const NODEV = "------------";
 const NOTEMP = "--.--";
+const SERIAL_REQUEST_TIMEOUT = 3000;
+const UPTIME_REQUEST_TIMEOUT = 3000;
+const SWITCH_RESPONSE = {
+  diode: /^~L[01]$/,
+  pause: /^~P[01]$/,
+};
+const COMMAND_CONFIRMATIONS = {
+  '~T1': 'Restart the connected PC now?',
+  '~T2': 'Send the Power command to the connected PC now?',
+  '~T3': 'Shut down the connected PC now?',
+};
+const COMMAND_RESPONSES = {
+  '~T1': /^~T1$/,
+  '~T2': /^~T2$/,
+  '~T3': /^~T3$/,
+};
+
+const serialCommand = (cmd, signal) => axios.post('/cmd/' + cmd, undefined, {
+  timeout: SERIAL_REQUEST_TIMEOUT,
+  signal,
+});
 
 function formatDate(n) {
   const day = Math.floor(n / (24 * 3600));
@@ -29,122 +48,217 @@ export default function TabMain(props) {
   const { settings, setSettings, setPresentExt } = props;
   const [info, setInfo] = useState(NODEV);
   const [present, setPresent] = useState(false);
+  const [commandPending, setCommandPending] = useState(false);
+  const [commandFeedback, setCommandFeedback] = useState(null);
 
   const [uptime, setUptime] = useState(null);
   const [temp, setTemp] = useState(NOTEMP);
+  const pollInFlight = useRef(false);
+  const uptimeInFlight = useRef(false);
+  const uptimeControllerRef = useRef(null);
+  const pollControllerRef = useRef(null);
+  const commandControllerRef = useRef(null);
+  const mountedRef = useRef(true);
 
-  useInterval(() => {
-    axios.get('/uptime').then((res)=>{
-      setUptime(formatDate(res.data))
-    });
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      uptimeControllerRef.current?.abort();
+      pollControllerRef.current?.abort();
+      commandControllerRef.current?.abort();
+    };
+  }, []);
+
+  useInterval(async () => {
+    if (uptimeInFlight.current) return;
+    uptimeInFlight.current = true;
+    const controller = new AbortController();
+    uptimeControllerRef.current = controller;
+    try {
+      const res = await axios.get('/uptime', {
+        timeout: UPTIME_REQUEST_TIMEOUT,
+        signal: controller.signal,
+      });
+      if (mountedRef.current && !controller.signal.aborted) setUptime(formatDate(res.data));
+    } catch {
+      if (mountedRef.current && !controller.signal.aborted) setUptime(null);
+    } finally {
+      if (uptimeControllerRef.current === controller) uptimeControllerRef.current = null;
+      uptimeInFlight.current = false;
+    }
   }, 1000);
 
-  useInterval(() => {
-    axios.get('/cmd/~U').then((res)=>{
-      const data = res.data;
-      if (data.startsWith('~A')) {
-        axios.get('/cmd/~G').then((res)=>{
-          setTemp(res.data)
-        }).catch(()=>{setTemp(NOTEMP)})
+  const markDisconnected = useCallback(() => {
+    if (!mountedRef.current) return;
+    setInfo(NODEV);
+    setPresent(false);
+    setPresentExt(false);
+  }, [setPresentExt]);
+
+  const pollDevice = useCallback(async () => {
+    if (pollInFlight.current) return;
+    pollInFlight.current = true;
+    const controller = new AbortController();
+    pollControllerRef.current = controller;
+
+    try {
+      let infoResponse;
+      try {
+        infoResponse = await serialCommand('~I', controller.signal);
+      } catch {
+        if (controller.signal.aborted || !mountedRef.current) return;
+        markDisconnected();
+        setTemp(NOTEMP);
+        return;
       }
-    })
-  }, 3500);
 
-  useInterval(() => {
-    axios.get('/cmd/~G').then((res)=>{
-      setTemp(res.data)
-    }).catch(()=>{setTemp(NOTEMP)})
-  }, 5500);
+      if (controller.signal.aborted || !mountedRef.current) return;
 
-  useInterval(() => {
-      axios.get('/cmd/~I').then((res)=>{
-        const data = res.data;
-        if (data.startsWith('~I')) {
-          setInfo(data.slice(2))
-          setPresent(true);
-          setPresentExt(true);
+      const infoData = String(infoResponse.data);
+      if (!infoData.startsWith('~I')) {
+        markDisconnected();
+        setTemp(NOTEMP);
+        return;
+      }
+
+      setInfo(infoData.slice(2));
+      setPresent(true);
+      setPresentExt(true);
+
+      try {
+        const heartbeatResponse = await serialCommand('~U', controller.signal);
+        if (!String(heartbeatResponse.data).startsWith('~A')) {
+          setTemp(NOTEMP);
+          return;
         }
-    }).catch(()=>{
-      setInfo(NODEV);
-      setPresent(false);
-      setPresentExt(false);
-    })
-  }, 8500);
 
-  const setDiode =()=> {
-    axios.get('/cmd/~L'+(!settings.Diode? "1":"0")).then((res)=>{
-      if (res.data.startsWith('~L')) {
-        setSettings({Diode: res.data[2] === "1"})
+        const temperatureResponse = await serialCommand('~G', controller.signal);
+        if (mountedRef.current && !controller.signal.aborted) setTemp(temperatureResponse.data);
+      } catch {
+        if (mountedRef.current && !controller.signal.aborted) setTemp(NOTEMP);
       }
-      
-    }).catch(()=>{})
-  }
+    } finally {
+      if (pollControllerRef.current === controller) pollControllerRef.current = null;
+      pollInFlight.current = false;
+    }
+  }, [markDisconnected, setPresentExt]);
 
-  const setPause =()=> {
-    axios.get('/cmd/~P'+(!settings.Pause? "1":"0")).then((res)=>{
-      //console.log(res.data);
-      if (res.data.startsWith('~P')) {
-        setSettings({Pause: res.data[2] === "1"})
+  useInterval(pollDevice, 5000);
+
+  const runDeviceCommand = useCallback(async (cmd, responsePattern = null) => {
+    if (commandControllerRef.current) return null;
+    const controller = new AbortController();
+    commandControllerRef.current = controller;
+    setCommandPending(true);
+    try {
+      const response = await serialCommand(cmd, controller.signal);
+      if (controller.signal.aborted || !mountedRef.current) return null;
+      const responseData = String(response.data ?? "");
+      if (responseData === "" || (responsePattern && !responsePattern.test(responseData))) {
+        throw new Error(`unexpected response to ${cmd}`);
       }
-    }).catch(()=>{})
-  }
+      setCommandFeedback({type: "success", text: I18n.get('Device command sent')});
+      return responseData;
+    } catch {
+      if (controller.signal.aborted || !mountedRef.current) return null;
+      setCommandFeedback({type: "error", text: I18n.get('Device command failed')});
+      return null;
+    } finally {
+      if (commandControllerRef.current === controller) commandControllerRef.current = null;
+      if (mountedRef.current && !controller.signal.aborted) setCommandPending(false);
+    }
+  }, []);
+
+  const setDiode = async () => {
+    const response = await runDeviceCommand('~L'+(!settings.Diode? "1":"0"), SWITCH_RESPONSE.diode);
+    if (response !== null) {
+      setSettings({Diode: response[2] === "1"});
+    }
+  };
+
+  const setPause = async () => {
+    const response = await runDeviceCommand('~P'+(!settings.Pause? "1":"0"), SWITCH_RESPONSE.pause);
+    if (response !== null) {
+      setSettings({Pause: response[2] === "1"});
+    }
+  };
+
+  const runConfirmedCommand = (cmd) => {
+    if (!window.confirm(I18n.get(COMMAND_CONFIRMATIONS[cmd]))) return;
+    void runDeviceCommand(cmd, COMMAND_RESPONSES[cmd]);
+  };
+
+  const statusText = present ? I18n.get('Device connected') : I18n.get('Device disconnected');
 
   return (<div>
-    <div className="card w-full bg-base-100 h-12 rounded-xl shadow-xl flex flex-row items-center">
-      <p className="ml-8">{info}</p>        
+    <section aria-label={I18n.get('Device status')} className="card min-h-12 w-full rounded-2xl border border-base-300/70 bg-base-100 p-4 shadow-lg sm:flex-row sm:items-center sm:gap-4 sm:px-6 sm:py-4">
+      <div className="flex min-w-0 items-center gap-4">
+        <p className="truncate font-mono" title={info}>{info}</p>
 
-      <div className="flex items-center justify-center ml-8">
-          <span className="flex absolute h-4 w-4">
-            { present && <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-accent opacity-75"></span> }
-            <span className="relative inline-flex rounded-full h-4 w-4 bg-accent"></span>
-          </span>
+        <span className="relative inline-flex h-4 w-4 shrink-0" role="status" aria-label={statusText} title={statusText}>
+          { present && <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-accent opacity-75"></span> }
+          <span className={`relative inline-flex rounded-full h-4 w-4 ${present ? 'bg-accent' : 'bg-base-300 ring-1 ring-base-content/20'}`}></span>
+        </span>
       </div>
 
-      <div className="grow"/>
-      <div className={"space-x-4 flex flex-row mr-4"}>
-        <p className="">{uptime}</p> 
-        <p className="">{temp}°C</p>
+      <div className="mt-3 flex min-w-0 flex-wrap items-center justify-start gap-x-3 gap-y-2 tabular-nums sm:ml-auto sm:mt-0 sm:flex-nowrap sm:justify-end sm:gap-4">
+        <p className="whitespace-nowrap">{uptime ?? '—'}</p>
+        <p className="whitespace-nowrap">{temp}°C</p>
         <a href="/monitor" target="_blank" rel="noreferrer" className="link link-accent link-hover">{I18n.get("Monitor")}</a>
-        <div className="tooltip tooltip-left" data-tip='Reset'>
-          <button onClick={()=>{ axios.get('/cmd/~T1') }} className='btn btn-outline btn-square base-content btn-xs' disabled={!present}><AiOutlineReload/></button>
-        </div>
-        <div className="tooltip tooltip-left" data-tip='Power'>
-          <button onClick={()=>{ axios.get('/cmd/~T2') }} className='btn btn-outline btn-square base-content btn-xs' disabled={!present}><AiOutlinePoweroff/></button>
-        </div>
-        <div className="tooltip tooltip-left" data-tip='Off'>
-          <button onClick={()=>{ axios.get('/cmd/~T3') }} className='btn btn-outline btn-square base-content btn-xs' disabled={!present}><AiOutlineClose/></button>
+        <div className="flex w-full shrink-0 items-center gap-2 pt-1 sm:w-auto sm:gap-1 sm:pt-0">
+          <div className="tooltip tooltip-bottom sm:tooltip-left" data-tip={I18n.get('Reset')}>
+            <button type="button" aria-label={I18n.get('Reset')} onClick={()=>runConfirmedCommand('~T1')} className='btn btn-outline btn-square base-content sm:btn-sm' disabled={!present || commandPending}><AiOutlineReload aria-hidden="true"/></button>
+          </div>
+          <div className="tooltip tooltip-bottom sm:tooltip-left" data-tip={I18n.get('Power')}>
+            <button type="button" aria-label={I18n.get('Power')} onClick={()=>runConfirmedCommand('~T2')} className='btn btn-outline btn-square base-content sm:btn-sm' disabled={!present || commandPending}><AiOutlinePoweroff aria-hidden="true"/></button>
+          </div>
+          <div className="tooltip tooltip-bottom sm:tooltip-left" data-tip={I18n.get('Shutdown')}>
+            <button type="button" aria-label={I18n.get('Shutdown')} onClick={()=>runConfirmedCommand('~T3')} className='btn btn-outline btn-square base-content sm:btn-sm' disabled={!present || commandPending}><AiOutlineClose aria-hidden="true"/></button>
+          </div>
         </div>
       </div>
-    </div>
+    </section>
 
+    {commandFeedback && (
+      <div
+        role={commandFeedback.type === "error" ? "alert" : "status"}
+        aria-live="polite"
+        className={`alert mt-4 break-words ${commandFeedback.type === "error" ? "alert-error" : "alert-success"}`}
+      >
+        {commandFeedback.text}
+      </div>
+    )}
 
-    <div className={"card w-full bg-base-100 shadow-xl mt-4 p-4 flex-col space-y-4"}>
-        <div className="flex justify-between">
-          <span className="label-text">{I18n.get('Network monitoring')}</span>
-          <input type="text" value={settings.Net} onChange={(e)=>{setSettings({Net: e.target.value})}} className="input input-bordered input-accent input-xs w-full max-w-xs" disabled={!present}/>
-          <input checked={settings.NetEn} onChange={()=>{setSettings({NetEn: !settings.NetEn})}} type="checkbox" className="toggle toggle-accent" disabled={!present}/>
+    <section aria-label={I18n.get('Monitoring settings')} className="card mt-4 w-full space-y-3 rounded-2xl border border-base-300/70 bg-base-100 p-4 shadow-lg sm:space-y-4 sm:p-5">
+        <label className="grid min-h-12 cursor-pointer grid-cols-[minmax(0,1fr)_auto] items-center gap-3 sm:min-h-0 sm:grid-cols-[minmax(0,1fr)_minmax(8rem,20rem)_auto]">
+          <span className="label-text min-w-0">{I18n.get('TCP endpoint monitoring')}</span>
+          <input aria-label={I18n.get('TCP endpoint monitoring')} title={I18n.get('Host, host:port or URL. A plain host uses port 80.')} placeholder="host, host:port, https://host…" type="text" name="network-monitoring" autoComplete="off" value={settings.Net} onChange={(e)=>{setSettings({Net: e.target.value})}} className="input input-bordered input-accent col-span-2 row-start-2 w-full min-w-0 sm:input-sm sm:row-auto sm:col-span-1 sm:col-start-2" disabled={!present}/>
+          <input aria-label={`${I18n.get('TCP endpoint monitoring')}: ${I18n.get('Host, host:port or URL. A plain host uses port 80.')}`} checked={settings.NetEn} onChange={()=>{setSettings({NetEn: !settings.NetEn})}} type="checkbox" className="toggle toggle-accent col-start-2 row-start-1 sm:row-auto sm:col-start-3" disabled={!present}/>
+        </label>
+
+        <div className="grid min-h-12 grid-cols-[minmax(0,1fr)_auto] items-center gap-3 sm:min-h-0 sm:grid-cols-[minmax(0,1fr)_minmax(8rem,20rem)_auto]">
+          <span className="label-text min-w-0">{I18n.get('Process monitoring')}</span>
+          <div className="col-span-2 row-start-2 sm:row-auto sm:col-span-1 sm:col-start-2">
+            <ProcDialog proc={settings.Proc} onChange={(name)=>{setSettings({Proc: name})}} disabled={!present}/>
+          </div>
+          <label className="col-start-2 row-start-1 flex min-h-11 cursor-pointer items-center justify-end sm:row-auto sm:col-start-3">
+            <span className="sr-only">{I18n.get('Process monitoring')}</span>
+            <input aria-label={I18n.get('Process monitoring')} checked={settings.ProcEn} onChange={()=>{setSettings({ProcEn: !settings.ProcEn})}} type="checkbox" className="toggle toggle-accent" disabled={!present}/>
+          </label>
         </div>
 
-        <div className="flex justify-between">
-          <span className="label-text">{I18n.get('Process monitoring')}</span>
-          <ProcDialog proc={settings.Proc} onChange={(name)=>{setSettings({Proc: name})}} disabled={!present}/>
-          <input checked={settings.ProcEn} onChange={()=>{setSettings({ProcEn: !settings.ProcEn})}} type="checkbox" className="toggle toggle-accent" disabled={!present}/>
-        </div>
+        <label className="grid min-h-12 cursor-pointer grid-cols-[minmax(0,1fr)_auto] items-center gap-3">
+          <span className="label-text min-w-0">{I18n.get('Led')}</span>
+          <input aria-label={I18n.get('Led')} checked={settings.Diode} onChange={()=>{void setDiode()}} type="checkbox" className="toggle toggle-accent" disabled={!present || commandPending}/>
+        </label>
 
-        <div className="flex justify-between">
-          <span className="label-text">{I18n.get('Led')}</span>
-          <input checked={settings.Diode} onChange={()=>{setDiode();setSettings({Diode: !settings.Diode})}} type="checkbox" className="toggle toggle-accent" disabled={!present}/>
-        </div>
-
-        <div className="flex justify-between">
-          <span className="label-text">{I18n.get('Pause')}</span>
-          <input checked={settings.Pause} onChange={()=>{setPause(); setSettings({Pause: !settings.Pause})}} type="checkbox" className="toggle toggle-accent" disabled={!present}/>
-        </div>
-    </div>
+        <label className="grid min-h-12 cursor-pointer grid-cols-[minmax(0,1fr)_auto] items-center gap-3">
+          <span className="label-text min-w-0">{I18n.get('Pause')}</span>
+          <input aria-label={I18n.get('Pause')} checked={settings.Pause} onChange={()=>{void setPause()}} type="checkbox" className="toggle toggle-accent" disabled={!present || commandPending}/>
+        </label>
+    </section>
 
   </div>
   )
 }
-
-
-

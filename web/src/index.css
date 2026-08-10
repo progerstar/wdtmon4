@@ -1,3 +1,64 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+@layer base {
+  html {
+    min-width: 320px;
+    color-scheme: light;
+    scroll-behavior: smooth;
+  }
+
+  body {
+    min-width: 320px;
+    min-height: 100vh;
+    margin: 0;
+    overflow-x: hidden;
+    -webkit-tap-highlight-color: hsl(var(--a) / 0.16);
+  }
+
+  button,
+  input,
+  select,
+  textarea,
+  a {
+    touch-action: manipulation;
+  }
+
+  :focus-visible {
+    outline: 2px solid hsl(var(--a));
+    outline-offset: 2px;
+  }
+}
+
+.skip-link {
+  position: fixed;
+  left: 0.75rem;
+  top: 0.75rem;
+  z-index: 100;
+  transform: translateY(-5rem);
+  border-radius: 0.5rem;
+  background: hsl(var(--b1));
+  color: hsl(var(--bc));
+  padding: 0.625rem 0.875rem;
+  box-shadow: 0 8px 24px hsl(var(--bc) / 0.18);
+  transition: transform 150ms ease-out;
+}
+
+.skip-link:focus-visible {
+  transform: translateY(0);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

@@ -2,26 +2,36 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/datumbrain/nulltypes"
 )
 
 type Settings struct {
-	Net             string
-	NetEn           bool
-	Proc            string
-	ProcEn          bool
-	Diode           bool
-	Pause           bool
-	ConEn           bool
-	ConUID          string
-	ConDev          string
-	ConAlias        string
-	ConAlert        bool
-	ConAlertVal     int
-	ConAlertSens    int
-	ConAlertTimeout int
+	Net           string
+	NetEn         bool
+	Proc          string
+	ProcEn        bool
+	Diode         bool
+	Pause         bool
+	ConEn         bool
+	ConUID        string
+	ConWriteToken string
+	ConDev        string
+}
+
+type settingsResponse struct {
+	Net           string
+	NetEn         bool
+	Proc          string
+	ProcEn        bool
+	Diode         bool
+	Pause         bool
+	ConEn         bool
+	ConConfigured bool
+	ConDev        string
 }
 
 type Proc struct {
@@ -29,28 +39,71 @@ type Proc struct {
 }
 
 type ConnectState struct {
-	Type       int                   `json:"type" form:"type"`
-	Value1     nulltypes.NullFloat64 `json:"value1,omitempty" form:"value1"`
-	Value2     int64                 `json:"value2,omitempty" form:"value2"`
-	Alias      string                `json:"alias,omitempty" form:"alias"`
-	Alert      bool                  `json:"alert,omitempty" form:"alert"`
-	Alert_time int                   `json:"alert_time,omitempty" form:"alert_time"`
+	Type   int                   `json:"ty" form:"ty"`
+	Value1 nulltypes.NullFloat64 `json:"v1,omitempty" form:"v1"`
+	Value2 *int64                `json:"v2,omitempty" form:"v2"`
 }
 
-// Write сохраняет настройки в файл
+const settingsFileMode os.FileMode = 0600
+
+// Write persists settings atomically with owner-only permissions.
 func (s *Settings) Write() error {
+	return s.writeTo(SETTINGS_FILE)
+}
+
+func (s *Settings) writeTo(filename string) error {
 	data, err := json.MarshalIndent(s, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(SETTINGS_FILE, data, 0644)
+	return writeFileAtomically(filename, data, settingsFileMode)
 }
 
-// Read загружает настройки из файла
+func writeFileAtomically(filename string, data []byte, mode os.FileMode) (err error) {
+	dir := filepath.Dir(filename)
+	temp, err := os.CreateTemp(dir, "."+filepath.Base(filename)+".tmp-*")
+	if err != nil {
+		return fmt.Errorf("create temporary settings file: %w", err)
+	}
+	tempName := temp.Name()
+	defer func() {
+		if temp != nil {
+			_ = temp.Close()
+		}
+		_ = os.Remove(tempName)
+	}()
+
+	if err := temp.Chmod(mode); err != nil {
+		return fmt.Errorf("set temporary settings permissions: %w", err)
+	}
+	if _, err := temp.Write(data); err != nil {
+		return fmt.Errorf("write temporary settings file: %w", err)
+	}
+	if err := temp.Sync(); err != nil {
+		return fmt.Errorf("sync temporary settings file: %w", err)
+	}
+	if err := temp.Close(); err != nil {
+		return fmt.Errorf("close temporary settings file: %w", err)
+	}
+	temp = nil
+
+	if err := replaceFile(tempName, filename); err != nil {
+		return fmt.Errorf("replace settings file: %w", err)
+	}
+	return nil
+}
+
+// Read loads settings and tightens permissions on a valid existing file.
 func (s *Settings) Read() error {
 	data, err := os.ReadFile(SETTINGS_FILE)
 	if err != nil {
 		return err
 	}
-	return json.Unmarshal(data, s)
+	if err := json.Unmarshal(data, s); err != nil {
+		return err
+	}
+	if err := os.Chmod(SETTINGS_FILE, settingsFileMode); err != nil {
+		return fmt.Errorf("secure settings file permissions: %w", err)
+	}
+	return nil
 }
