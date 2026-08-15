@@ -111,7 +111,7 @@ describe('TabMain device controls', () => {
         case '/cmd/~I': return Promise.resolve({data: '~IWatchDog'});
         case '/cmd/~U': return Promise.resolve({data: '~A'});
         case '/cmd/~G': return Promise.resolve({data: '23.5'});
-        case '/cmd/~T2': return Promise.resolve({data: 'Busy'});
+        case '/cmd/~T2': return Promise.resolve({data: 'Blocked'});
         default: return Promise.reject(new Error(`unexpected URL: ${url}`));
       }
     });

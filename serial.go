@@ -88,14 +88,8 @@ func validateSerialWrite(written, expected int, err error) error {
 	return nil
 }
 
-func normalizeSerialResponse(command, response string) string {
-	if response != "" {
-		return response
-	}
-	if command == "~T1" || command == "~T2" || command == "~T3" {
-		return command
-	}
-	return ""
+func normalizeSerialResponse(response string) string {
+	return response
 }
 
 func serialWorker(ctx context.Context, portName string, ch <-chan serialRequest) {
@@ -143,7 +137,7 @@ func serialWorker(ctx context.Context, portName string, ch <-chan serialRequest)
 			if err := validateSerialWrite(written, len(cmd), writeErr); err != nil {
 				log.Printf("Failed to write command '%s': %v", cmd, err)
 			} else {
-				response = normalizeSerialResponse(cmd, ReadLine(port, 1*time.Second))
+				response = normalizeSerialResponse(ReadLine(port, 1*time.Second))
 			}
 
 			if closeErr := port.Close(); closeErr != nil {

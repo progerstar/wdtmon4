@@ -56,19 +56,14 @@ func TestValidateSerialWriteRejectsPartialWrite(t *testing.T) {
 	}
 }
 
-func TestNormalizeSerialResponseForSilentPowerCommands(t *testing.T) {
-	for _, command := range []string{"~T1", "~T2", "~T3"} {
-		if got := normalizeSerialResponse(command, ""); got != command {
-			t.Errorf("normalizeSerialResponse(%q, empty) = %q, want command echo", command, got)
-		}
+func TestNormalizeSerialResponseDoesNotFabricateAcknowledgement(t *testing.T) {
+	if got := normalizeSerialResponse(""); got != "" {
+		t.Fatalf("empty response = %q, want empty", got)
 	}
-	for _, response := range []string{"Busy\n", "Invalid\n"} {
-		if got := normalizeSerialResponse("~T1", response); got != response {
+	for _, response := range []string{"Busy\n", "Blocked\n", "Invalid\n"} {
+		if got := normalizeSerialResponse(response); got != response {
 			t.Errorf("response %q changed to %q", response, got)
 		}
-	}
-	if got := normalizeSerialResponse("~U", ""); got != "" {
-		t.Fatalf("non-power command empty response = %q, want empty", got)
 	}
 }
 
