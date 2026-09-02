@@ -17,4 +17,9 @@ web/node_modules
 web/build
 web/coverage
 
+/build/
+/dist/linux/
+/dist/windows/
+/dist/macos/
+
 /.idea/

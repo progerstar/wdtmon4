@@ -1,0 +1,332 @@
+name: wdtmon4-packages
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+    paths:
+      - ".github/workflows/release.yml"
+      - "scripts/**"
+      - "web/**"
+      - "*.go"
+      - "go.mod"
+      - "go.sum"
+      - "LICENSE"
+      - "README.md"
+  pull_request:
+    paths:
+      - ".github/workflows/release.yml"
+      - "scripts/**"
+      - "web/**"
+      - "*.go"
+      - "go.mod"
+      - "go.sum"
+      - "LICENSE"
+      - "README.md"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: wdtmon4-packages-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  metadata:
+    name: Validate release metadata
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      app_version: ${{ steps.version.outputs.app_version }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Validate tag and application version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          source scripts/common.sh
+          version=$(app_version)
+          echo "app_version=$version" >> "$GITHUB_OUTPUT"
+
+          if [[ "$GITHUB_REF_TYPE" == tag && "$GITHUB_REF_NAME" != "v$version" ]]; then
+            echo "Release tag must be v$version; got $GITHUB_REF_NAME" >&2
+            exit 1
+          fi
+
+          echo "### wdtmon4 $version" >> "$GITHUB_STEP_SUMMARY"
+
+  test:
+    name: Test source
+    needs: metadata
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Run source tests
+        shell: bash
+        run: ./scripts/test.sh
+
+  build-linux:
+    name: Linux x86-64 AppImage
+    needs:
+      - metadata
+      - test
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install AppImage tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y desktop-file-utils file
+
+          appimagetool="$RUNNER_TEMP/appimagetool-x86_64.AppImage"
+          runtime="$RUNNER_TEMP/runtime-x86_64"
+          curl --fail --location --retry 3 --proto '=https' --tlsv1.2 \
+            --output "$appimagetool" \
+            https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage
+          echo 'ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0  '"$appimagetool" \
+            | sha256sum --check --strict
+          curl --fail --location --retry 3 --proto '=https' --tlsv1.2 \
+            --output "$runtime" \
+            https://github.com/AppImage/type2-runtime/releases/download/20251108/runtime-x86_64
+          echo '2fca8b443c92510f1483a883f60061ad09b46b978b2631c807cd873a47ec260d  '"$runtime" \
+            | sha256sum --check --strict
+          chmod 0755 "$appimagetool"
+          echo "APPIMAGETOOL=$appimagetool" >> "$GITHUB_ENV"
+          echo "APPIMAGE_RUNTIME_FILE=$runtime" >> "$GITHUB_ENV"
+
+      - name: Build Linux package
+        shell: bash
+        run: ./scripts/package-linux.sh
+
+      - name: Verify Linux checksum
+        shell: bash
+        working-directory: dist/linux
+        run: sha256sum --check --strict *.sha256
+
+      - name: Upload Linux package
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: wdtmon4-linux-x86_64
+          path: dist/linux/*
+          if-no-files-found: error
+          retention-days: 14
+
+  build-windows:
+    name: Windows x86-64 ZIP
+    needs:
+      - metadata
+      - test
+    runs-on: windows-2022
+    timeout-minutes: 30
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Build Windows package
+        shell: pwsh
+        run: ./scripts/package-windows.ps1
+
+      - name: Verify Windows checksum
+        shell: pwsh
+        working-directory: dist/windows
+        run: |
+          $ChecksumFiles = @(Get-ChildItem -File -Filter *.sha256)
+          if ($ChecksumFiles.Count -eq 0) {
+            throw "No checksum files were created"
+          }
+          foreach ($ChecksumFile in $ChecksumFiles) {
+            $Line = (Get-Content -Raw -LiteralPath $ChecksumFile.FullName).Trim()
+            if ($Line -notmatch '^([0-9a-fA-F]{64})\s{2}(.+)$') {
+              throw "Invalid checksum file: $($ChecksumFile.Name)"
+            }
+            $Expected = $Matches[1].ToLowerInvariant()
+            $PackageName = $Matches[2]
+            $Actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $PackageName).Hash.ToLowerInvariant()
+            if ($Actual -ne $Expected) {
+              throw "Checksum mismatch: $PackageName"
+            }
+            Write-Host "${PackageName}: OK"
+          }
+
+      - name: Upload Windows package
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: wdtmon4-windows-x86_64
+          path: dist/windows/*
+          if-no-files-found: error
+          retention-days: 14
+
+  build-macos:
+    name: macOS universal DMG
+    needs:
+      - metadata
+      - test
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Build macOS package
+        shell: bash
+        run: ./scripts/package-macos.sh
+
+      - name: Verify macOS checksum
+        shell: bash
+        working-directory: dist/macos
+        run: shasum -a 256 --check *.sha256
+
+      - name: Upload macOS package
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: wdtmon4-macos-universal
+          path: dist/macos/*
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    name: Publish GitHub Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs:
+      - metadata
+      - build-linux
+      - build-windows
+      - build-macos
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - name: Download all packages
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: wdtmon4-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Verify packages and create manifests
+        shell: bash
+        env:
+          APP_VERSION: ${{ needs.metadata.outputs.app_version }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          checksums=(release-assets/*.sha256)
+          if ((${#checksums[@]} != 3)); then
+            echo "Expected 3 package checksums; found ${#checksums[@]}" >&2
+            exit 1
+          fi
+
+          (
+            cd release-assets
+            for checksum in *.sha256; do
+              sha256sum --check --strict "$checksum" >&2
+            done
+            cat -- *.sha256 | LC_ALL=C sort -k2 > wdtmon4-SHA256SUMS.txt
+          )
+
+          printf 'wdtmon4 %s\nGit commit: %s\n' \
+            "$APP_VERSION" "$GITHUB_SHA" > release-assets/wdtmon4-version.txt
+
+      - name: Publish release assets
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          APP_VERSION: ${{ needs.metadata.outputs.app_version }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          assets=(release-assets/*)
+          if ((${#assets[@]} != 8)); then
+            echo "Expected 8 release assets; found ${#assets[@]}" >&2
+            exit 1
+          fi
+
+          if gh release view "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" "${assets[@]}" \
+              --repo "$GITHUB_REPOSITORY" \
+              --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" "${assets[@]}" \
+              --repo "$GITHUB_REPOSITORY" \
+              --verify-tag \
+              --generate-notes \
+              --title "wdtmon4 $APP_VERSION"
+          fi

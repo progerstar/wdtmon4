@@ -1,6 +1,6 @@
 module github.com/progerstar/wdtmon4
 
-go 1.26.5
+go 1.26.0
 
 require (
 	github.com/datumbrain/nulltypes v0.0.0-20220127183023-3a9d8a48e6ed

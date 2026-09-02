@@ -10,7 +10,7 @@
 
 ## Требования
 
-- Go 1.26.5 или новее
+- Go 1.26.0 или новее
 - Node.js 20.19+ или 22.12+
 
 ## Сборка
@@ -37,6 +37,28 @@ Vite собирает фронтенд в `web/build`, после чего эт�
 ```bash
 go build -trimpath -ldflags "-X main.VERSION=1.3" -o wdtmon4 .
 ```
+
+### Пакеты для выпуска
+
+Скрипты в `scripts/` создают готовые пакеты и файлы `.sha256`:
+
+```bash
+# Linux: AppImage текущей архитектуры; нужен appimagetool
+./scripts/package-linux.sh
+
+# Windows x86-64 (PowerShell)
+pwsh -File ./scripts/package-windows.ps1
+
+# macOS 12+: универсальный DMG для Intel и Apple Silicon
+./scripts/package-macos.sh
+```
+
+Каждый скрипт сначала выполняет `npm ci` и собирает веб-интерфейс. Для повторной
+локальной упаковки готового `web/build` можно задать `SKIP_WEB_BUILD=1`.
+
+Workflow `wdtmon4-packages` проверяет ветку `main` и pull request. Тег, точно
+совпадающий с версией приложения, например `v1.3`, дополнительно публикует один
+GitHub Release с AppImage, Windows ZIP, универсальным DMG и контрольными суммами.
 
 ## Запуск
 
@@ -103,7 +125,7 @@ provides a web interface for device, process, network, and Cloud Lite settings.
 
 ## Requirements
 
-- Go 1.26.5 or newer
+- Go 1.26.0 or newer
 - Node.js 20.19+ or 22.12+
 
 ## Build
@@ -128,6 +150,30 @@ Release builds can override the displayed version without editing the source:
 ```bash
 go build -trimpath -ldflags "-X main.VERSION=1.3" -o wdtmon4 .
 ```
+
+### Release packages
+
+The scripts in `scripts/` create ready-to-distribute packages and `.sha256`
+files:
+
+```bash
+# Linux: an AppImage for the current architecture; appimagetool is required
+./scripts/package-linux.sh
+
+# Windows x86-64 (PowerShell)
+pwsh -File ./scripts/package-windows.ps1
+
+# macOS 12+: a universal DMG for Intel and Apple Silicon
+./scripts/package-macos.sh
+```
+
+Each script runs `npm ci` and builds the web interface first. Set
+`SKIP_WEB_BUILD=1` to repackage an existing local `web/build` directory.
+
+The `wdtmon4-packages` workflow validates `main` and pull requests. A tag that
+exactly matches the application version, such as `v1.3`, also publishes one
+GitHub Release containing the AppImage, Windows ZIP, universal DMG, and
+checksums.
 
 ## Run
 
