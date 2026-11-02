@@ -31,13 +31,6 @@ Vite собирает фронтенд в `web/build`, после чего эт�
 исполняемый файл Go. Поэтому в чистой копии репозитория фронтенд нужно собрать
 до запуска тестов Go или компиляции программы.
 
-Версию, которую показывает готовая программа, можно задать при выпускной сборке
-без изменения исходного кода:
-
-```bash
-go build -trimpath -ldflags "-X main.VERSION=1.3" -o wdtmon4 .
-```
-
 ### Пакеты для выпуска
 
 Скрипты в `scripts/` создают готовые пакеты и файлы `.sha256`:
@@ -55,10 +48,6 @@ pwsh -File ./scripts/package-windows.ps1
 
 Каждый скрипт сначала выполняет `npm ci` и собирает веб-интерфейс. Для повторной
 локальной упаковки готового `web/build` можно задать `SKIP_WEB_BUILD=1`.
-
-Workflow `wdtmon4-packages` проверяет ветку `main` и pull request. Тег, точно
-совпадающий с версией приложения, например `v1.3`, дополнительно публикует один
-GitHub Release с AppImage, Windows ZIP, универсальным DMG и контрольными суммами.
 
 ## Запуск
 
@@ -145,12 +134,6 @@ go build -trimpath -o wdtmon4 .
 The Vite frontend is built into `web/build` and embedded in the Go executable,
 so it must be built before Go tests or compilation in a clean checkout.
 
-Release builds can override the displayed version without editing the source:
-
-```bash
-go build -trimpath -ldflags "-X main.VERSION=1.3" -o wdtmon4 .
-```
-
 ### Release packages
 
 The scripts in `scripts/` create ready-to-distribute packages and `.sha256`
@@ -169,11 +152,6 @@ pwsh -File ./scripts/package-windows.ps1
 
 Each script runs `npm ci` and builds the web interface first. Set
 `SKIP_WEB_BUILD=1` to repackage an existing local `web/build` directory.
-
-The `wdtmon4-packages` workflow validates `main` and pull requests. A tag that
-exactly matches the application version, such as `v1.3`, also publishes one
-GitHub Release containing the AppImage, Windows ZIP, universal DMG, and
-checksums.
 
 ## Run
 
