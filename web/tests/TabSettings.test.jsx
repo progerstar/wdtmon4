@@ -91,4 +91,19 @@ describe('TabSettings error feedback', () => {
       expect.objectContaining({timeout: 3000, signal: expect.any(AbortSignal)}),
     );
   });
+
+  test('reports settings rejected by the device', async () => {
+    axios.post
+      .mockResolvedValueOnce({data: validResponse})
+      .mockResolvedValueOnce({data: 'Invalid'});
+
+    render(<TabSettings />);
+
+    const writeButton = screen.getByRole('button', {name: 'Write'});
+    await waitFor(() => expect(writeButton).toBeEnabled());
+    fireEvent.click(writeButton);
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('The device rejected the settings');
+    expect(screen.queryByText('Settings updated')).not.toBeInTheDocument();
+  });
 });

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -60,9 +61,94 @@ func TestNormalizeSerialResponseDoesNotFabricateAcknowledgement(t *testing.T) {
 	if got := normalizeSerialResponse(""); got != "" {
 		t.Fatalf("empty response = %q, want empty", got)
 	}
-	for _, response := range []string{"Busy\n", "Blocked\n", "Invalid\n"} {
-		if got := normalizeSerialResponse(response); got != response {
+	for _, response := range []string{"Busy\n", "Invalid\r\n"} {
+		if got := normalizeSerialResponse(response); got != strings.TrimSpace(response) {
 			t.Errorf("response %q changed to %q", response, got)
+		}
+	}
+}
+
+// fakeSerialPort serves chunks like a serial port with a read timeout: an
+// empty chunk is a poll interval without data.
+type fakeSerialPort struct {
+	chunks []string
+	err    error
+}
+
+func (port *fakeSerialPort) Read(p []byte) (int, error) {
+	if len(port.chunks) == 0 {
+		if port.err != nil {
+			return 0, port.err
+		}
+		return 0, nil
+	}
+	chunk := port.chunks[0]
+	port.chunks = port.chunks[1:]
+	return copy(p, chunk), nil
+}
+
+func TestReadResponseKeepsEveryLine(t *testing.T) {
+	tests := []struct {
+		name   string
+		chunks []string
+		want   string
+	}{
+		{name: "alert and acknowledgement in one packet", chunks: []string{"Alert\n~A\n"}, want: "Alert\n~A"},
+		{name: "lines split across reads", chunks: []string{"Al", "ert\n", "~A\n"}, want: "Alert\n~A"},
+		{name: "line completed after a pause", chunks: []string{"~F12", "", "34\n"}, want: "~F1234"},
+		{name: "silence", want: ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := readResponse(&fakeSerialPort{chunks: tt.chunks}, 20*time.Millisecond)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != tt.want {
+				t.Fatalf("readResponse() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestReadResponseStopsAtCompleteLineFollowedBySilence(t *testing.T) {
+	port := &fakeSerialPort{chunks: []string{"~A\n", "", "late\n"}}
+	got, err := readResponse(port, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "~A" {
+		t.Fatalf("readResponse() = %q, want ~A", got)
+	}
+}
+
+func TestReadResponseReportsReadErrors(t *testing.T) {
+	disconnected := errors.New("port closed")
+	got, err := readResponse(&fakeSerialPort{err: disconnected}, time.Second)
+	if !errors.Is(err, disconnected) || got != "" {
+		t.Fatalf("readResponse() = %q, %v; want empty response and %v", got, err, disconnected)
+	}
+}
+
+func TestParseHeartbeatResponse(t *testing.T) {
+	tests := []struct {
+		response     string
+		acknowledged bool
+		alert        bool
+	}{
+		{response: "~A", acknowledged: true},
+		{response: "Alert\n~A", acknowledged: true, alert: true},
+		{response: "Alert", alert: true},
+		{response: "Invalid command"},
+		{response: ""},
+	}
+
+	for _, tt := range tests {
+		acknowledged, alert := parseHeartbeatResponse(tt.response)
+		if acknowledged != tt.acknowledged || alert != tt.alert {
+			t.Errorf("parseHeartbeatResponse(%q) = %v, %v; want %v, %v",
+				tt.response, acknowledged, alert, tt.acknowledged, tt.alert)
 		}
 	}
 }
@@ -74,7 +160,7 @@ func TestSendrecvReceivesItsOwnResponse(t *testing.T) {
 		if request.command != "~U" {
 			t.Errorf("command = %q, want ~U", request.command)
 		}
-		request.respond(" ~A\n")
+		request.respond(serialResult{response: " ~A\n"})
 	}()
 
 	response, err := sendrecvWithTimeout(context.Background(), "~U", requests, time.Second)
@@ -121,7 +207,7 @@ func TestPerioderInvalidatesTemperatureWhenHeartbeatFails(t *testing.T) {
 		if request.command != "~U" {
 			t.Fatalf("command = %q, want ~U", request.command)
 		}
-		request.respond("")
+		request.respond(serialResult{err: errNoResponse})
 	case <-time.After(3 * time.Second):
 		t.Fatal("perioder did not issue a heartbeat request")
 	}
@@ -150,4 +236,53 @@ func TestPerioderInvalidatesTemperatureWhenHeartbeatFails(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("perioder did not stop after context cancellation")
 	}
+}
+
+func TestPerioderAcceptsHeartbeatWithRebootAlert(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	settings := &Settings{}
+	var mu sync.RWMutex
+	active := false
+	temperature := invalidTemperature()
+	requests := make(chan serialRequest)
+	done := make(chan struct{})
+	go func() {
+		perioderWithIntervals(ctx, settings, &mu, requests, &active, &temperature, 10*time.Millisecond, time.Hour)
+		close(done)
+	}()
+
+	for _, exchange := range []struct{ command, response string }{
+		{command: "~U", response: "Alert\n~A"},
+		{command: "~G", response: "~G0235"},
+	} {
+		select {
+		case request := <-requests:
+			if request.command != exchange.command {
+				t.Fatalf("command = %q, want %q", request.command, exchange.command)
+			}
+			request.respond(serialResult{response: exchange.response})
+		case <-time.After(time.Second):
+			t.Fatalf("perioder did not send %s", exchange.command)
+		}
+	}
+
+	deadline := time.After(time.Second)
+	for {
+		mu.RLock()
+		isActive, currentTemperature := active, temperature
+		mu.RUnlock()
+		if isActive && currentTemperature.Valid && currentTemperature.Float64 == 23.5 {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("heartbeat with reboot alert left active=%v temperature=%+v", isActive, currentTemperature)
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+
+	cancel()
+	<-done
 }

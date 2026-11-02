@@ -209,7 +209,7 @@ export default function TabSettings() {
             if (controller.signal.aborted || !mountedRef.current) return;
             const decoded = decodeSettingsResponse(response.data);
             if (decoded === null) {
-                const message = response.data === 'Error' ? I18n.get('Error') : I18n.get('Unexpected device response');
+                const message = String(response.data ?? "").trim() === 'Invalid' ? I18n.get('The device rejected the settings') : I18n.get('Unexpected device response');
                 setOperationError(message);
                 showToast(message);
                 return;

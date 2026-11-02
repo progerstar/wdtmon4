@@ -150,7 +150,7 @@ func sendrecvWithTimeout(ctx context.Context, cmd string, ch chan<- serialReques
 	requestCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	response := make(chan string, 1)
+	response := make(chan serialResult, 1)
 	request := serialRequest{command: cmd, response: response}
 
 	select {
@@ -161,10 +161,13 @@ func sendrecvWithTimeout(ctx context.Context, cmd string, ch chan<- serialReques
 
 	select {
 	case res := <-response:
-		if res == "" {
-			return "", errors.New("empty response")
+		if res.err != nil {
+			return "", fmt.Errorf("serial command %q: %w", cmd, res.err)
 		}
-		return strings.TrimSpace(res), nil
+		if res.response == "" {
+			return "", fmt.Errorf("serial command %q: %w", cmd, errNoResponse)
+		}
+		return strings.TrimSpace(res.response), nil
 	case <-requestCtx.Done():
 		return "", fmt.Errorf("wait for serial command %q: %w", cmd, requestCtx.Err())
 	}
@@ -315,23 +318,46 @@ func invalidTemperature() nulltypes.NullFloat64 {
 	return nulltypes.NullFloat64{Float64: 0, Valid: false}
 }
 
-func parseTemperature(tbuf string) nulltypes.NullFloat64 {
-	if strings.Contains(tbuf, "EEEE") {
-		return invalidTemperature()
+// parseHeartbeatResponse checks a ~U response. Once after the reboot limit was
+// reached (and, in firmware 1.8U, after a ~T3 shutdown) the device sends
+// "Alert" before "~A"; the same ~U clears the alert.
+func parseHeartbeatResponse(response string) (acknowledged, alert bool) {
+	for _, line := range strings.Split(response, "\n") {
+		switch strings.TrimSpace(line) {
+		case "~A":
+			acknowledged = true
+		case "Alert":
+			alert = true
+		}
+	}
+	return acknowledged, alert
+}
+
+func parseTemperature(tbuf string) (nulltypes.NullFloat64, error) {
+	// EEEE: sensor error, FFFF: no measurement yet, ~GI/~GO: the channel is a
+	// digital input/output rather than a temperature sensor.
+	if strings.Contains(tbuf, "EEEE") || strings.Contains(tbuf, "FFFF") ||
+		strings.HasPrefix(tbuf, "~GI") || strings.HasPrefix(tbuf, "~GO") {
+		return invalidTemperature(), nil
 	}
 
 	if len(tbuf) >= 6 && strings.HasPrefix(tbuf, "~G") {
-		tempStr := tbuf[2:6]
-		if n, err := strconv.ParseFloat(tempStr, 64); err == nil {
-			temp := n / 10
-			return nulltypes.NullFloat64{Float64: temp, Valid: true}
-		} else {
-			log.Printf("parseTemperature: failed to parse temperature '%s': %v", tempStr, err)
+		n, err := strconv.ParseFloat(tbuf[2:6], 64)
+		if err != nil {
+			return invalidTemperature(), fmt.Errorf("parse temperature %q: %w", tbuf, err)
 		}
+		return nulltypes.NullFloat64{Float64: n / 10, Valid: true}, nil
 	}
 
-	log.Printf("parseTemperature: invalid format '%s'", tbuf)
-	return invalidTemperature()
+	return invalidTemperature(), fmt.Errorf("invalid temperature response %q", tbuf)
+}
+
+func readTemperature(ctx context.Context, ch chan<- serialRequest) (nulltypes.NullFloat64, error) {
+	response, err := sendrecv(ctx, "~G", ch)
+	if err != nil {
+		return invalidTemperature(), err
+	}
+	return parseTemperature(response)
 }
 
 func perioder(ctx context.Context, settings *Settings, mu *sync.RWMutex, ch chan<- serialRequest, active *bool, temp *nulltypes.NullFloat64) {
@@ -374,6 +400,8 @@ func perioderWithIntervals(
 	}
 	heartbeat := time.NewTicker(heartbeatEvery)
 	defer heartbeat.Stop()
+	// Heartbeats repeat every few seconds; report each condition only when it changes.
+	var networkLog, processLog, pauseLog, heartbeatLog, temperatureLog conditionLog
 	connbeat := time.NewTicker(cloudEvery)
 	defer connbeat.Stop()
 
@@ -407,43 +435,64 @@ func perioderWithIntervals(
 			sett := readSettings()
 			isActive := true
 
-			if sett.NetEn && len(sett.Net) > 0 {
-				log.Printf("Checking network connectivity to %s", sett.Net)
-				if err := ping(sett.Net); err != nil {
-					log.Printf("Network check failed for %s: %v", sett.Net, err)
-					isActive = false
-				} else {
-					log.Printf("Network check passed for %s", sett.Net)
-				}
-			}
-
-			if isActive && sett.ProcEn && len(sett.Proc) > 0 {
-				if found, err := FindProcess(sett.Proc); !found || err != nil {
-					if err != nil {
-						log.Printf("Process check error: %v", err)
-					} else {
-						log.Printf("Process %s not found", sett.Proc)
-					}
-					isActive = false
-				}
-			}
-
-			if isActive && sett.Pause {
-				log.Printf("Pause mode enabled, setting inactive")
+			if !sett.NetEn || sett.Net == "" {
+				networkLog.clear("Network monitoring disabled")
+			} else if err := ping(sett.Net); err != nil {
+				networkLog.set("Network check failed for %s: %v", sett.Net, err)
 				isActive = false
+			} else {
+				networkLog.clear("Network check passed for %s", sett.Net)
+			}
+
+			if !sett.ProcEn || sett.Proc == "" {
+				processLog.clear("Process monitoring disabled")
+			} else if isActive {
+				found, err := FindProcess(sett.Proc)
+				switch {
+				case err != nil:
+					processLog.set("Process check error: %v", err)
+					isActive = false
+				case !found:
+					processLog.set("Process %s not found", sett.Proc)
+					isActive = false
+				default:
+					processLog.clear("Process %s found", sett.Proc)
+				}
+			}
+
+			if sett.Pause {
+				pauseLog.set("Pause mode enabled, heartbeat stopped")
+				isActive = false
+			} else {
+				pauseLog.clear("Pause mode disabled, heartbeat resumed")
 			}
 
 			if isActive {
 				resp, err := sendrecv(ctx, "~U", ch)
-				ok := err == nil && resp == "~A"
+				ok, alert := parseHeartbeatResponse(resp)
+				switch {
+				case ok:
+					heartbeatLog.clear("Heartbeat acknowledged by the device again")
+				case ctx.Err() != nil, errors.Is(err, errPortUnavailable):
+					// Shutting down, or the serial worker already reported the port.
+				case err != nil:
+					heartbeatLog.set("Heartbeat failed: %v", err)
+				default:
+					heartbeatLog.set("Unexpected heartbeat response: %q", resp)
+				}
+				if alert {
+					log.Printf("Device reported a reboot alert (reboot limit reached or shut down by ~T3); the heartbeat cleared it")
+				}
 				writeActive(ok)
 
 				if ok {
-					if tbuf, err := sendrecv(ctx, "~G", ch); err == nil {
-						writeTemp(parseTemperature(tbuf))
-					} else {
-						log.Printf("Temperature read failed: %v", err)
-						writeTemp(invalidTemperature())
+					temperature, err := readTemperature(ctx, ch)
+					writeTemp(temperature)
+					switch {
+					case err == nil:
+						temperatureLog.clear("Temperature read restored")
+					case ctx.Err() == nil && !errors.Is(err, errPortUnavailable):
+						temperatureLog.set("Temperature read failed: %v", err)
 					}
 				} else {
 					writeTemp(invalidTemperature())

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net"
@@ -113,6 +114,56 @@ func TestStatusAndCachedCommandRoutes(t *testing.T) {
 	defer getResponse.Body.Close()
 	if getResponse.StatusCode != fiber.StatusMethodNotAllowed {
 		t.Fatalf("GET /cmd/~U returned %d, want 405", getResponse.StatusCode)
+	}
+}
+
+func TestDeviceCommandResponses(t *testing.T) {
+	tests := []struct {
+		command    string
+		result     serialResult
+		wantStatus int
+		wantBody   string
+	}{
+		{command: "~T1", result: serialResult{err: errNoResponse}, wantStatus: fiber.StatusAccepted},
+		{command: "~T3", result: serialResult{err: fmt.Errorf("%w: port closed", errNoResponse)}, wantStatus: fiber.StatusAccepted},
+		{command: "~T2", result: serialResult{response: "Busy"}, wantStatus: fiber.StatusOK, wantBody: "Busy"},
+		{command: "~P0", result: serialResult{response: "Invalid"}, wantStatus: fiber.StatusOK, wantBody: "Invalid"},
+		{command: "~F", result: serialResult{err: errNoResponse}, wantStatus: fiber.StatusGatewayTimeout},
+		{command: "~T1", result: serialResult{err: errors.New("read timeout setup failed")}, wantStatus: fiber.StatusInternalServerError},
+		{command: "~I", result: serialResult{err: fmt.Errorf("%w: no such file", errPortUnavailable)}, wantStatus: fiber.StatusServiceUnavailable},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.command+" "+tt.result.response, func(t *testing.T) {
+			ws, _ := newTestWebServer()
+			requests := make(chan serialRequest)
+			ws.serChan = requests
+			go func() {
+				request := <-requests
+				if request.command != tt.command {
+					t.Errorf("command = %q, want %q", request.command, tt.command)
+				}
+				request.respond(tt.result)
+			}()
+
+			app := fiber.New()
+			ws.setupAPIRoutes(app)
+			response, err := app.Test(httptest.NewRequest(http.MethodPost, "/cmd/"+tt.command, nil))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer response.Body.Close()
+			body, err := io.ReadAll(response.Body)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if response.StatusCode != tt.wantStatus {
+				t.Fatalf("status = %d, want %d", response.StatusCode, tt.wantStatus)
+			}
+			if tt.wantBody != "" && string(body) != tt.wantBody {
+				t.Fatalf("body = %q, want %q", body, tt.wantBody)
+			}
+		})
 	}
 }
 

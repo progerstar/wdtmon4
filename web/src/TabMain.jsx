@@ -9,19 +9,39 @@ const NODEV = "------------";
 const NOTEMP = "--.--";
 const SERIAL_REQUEST_TIMEOUT = 3000;
 const UPTIME_REQUEST_TIMEOUT = 3000;
-const SWITCH_RESPONSE = {
-  diode: /^~L[01]$/,
-  pause: /^~P[01]$/,
-};
 const COMMAND_CONFIRMATIONS = {
   '~T1': 'Restart the connected PC now?',
   '~T2': 'Send the Power command to the connected PC now?',
   '~T3': 'Shut down the connected PC now?',
 };
-const COMMAND_RESPONSES = {
-  '~T1': /^~T1$/,
-  '~T2': /^~T2$/,
-  '~T3': /^~T3$/,
+
+const responseText = (response) => String(response.data ?? "").trim();
+
+// The device echoes ~L and ~P commands.
+const expectEcho = (cmd) => (response) => (responseText(response) === cmd ? {value: cmd} : {});
+
+// ~T1..~T3 are not echoed: the backend answers 202 when the device stayed
+// silent. The device answers Busy while a ~M command is pending.
+const expectPowerCommand = (cmd) => (response) => {
+  const data = responseText(response);
+  if (response.status === 202 || data === cmd) return {value: cmd};
+  if (data === 'Busy') return {error: 'Device is busy'};
+  return {};
+};
+
+// The device answers Invalid to ~P0/~P1 while its timer is off: the timeout is
+// 0, no channel is set to Reset/Power, or a reboot alert is pending. Nothing is
+// paused on the device then, so resuming only has to restart heartbeats; the
+// next ~U clears a reboot alert and lets the device start its timer.
+const expectPauseCommand = (cmd) => (response) => {
+  const data = responseText(response);
+  if (data === cmd) return {value: cmd};
+  if (data === 'Invalid') {
+    return cmd === '~P0'
+      ? {value: cmd, message: 'Heartbeat resumed. The device timer is off.'}
+      : {error: 'The device timer is off. There is nothing to pause.'};
+  }
+  return {};
 };
 
 const serialCommand = (cmd, signal) => axios.post('/cmd/' + cmd, undefined, {
@@ -146,7 +166,7 @@ export default function TabMain(props) {
 
   useInterval(pollDevice, 5000);
 
-  const runDeviceCommand = useCallback(async (cmd, responsePattern = null) => {
+  const runDeviceCommand = useCallback(async (cmd, interpretResponse) => {
     if (commandControllerRef.current) return null;
     const controller = new AbortController();
     commandControllerRef.current = controller;
@@ -154,12 +174,13 @@ export default function TabMain(props) {
     try {
       const response = await serialCommand(cmd, controller.signal);
       if (controller.signal.aborted || !mountedRef.current) return null;
-      const responseData = String(response.data ?? "");
-      if (responseData === "" || (responsePattern && !responsePattern.test(responseData))) {
-        throw new Error(`unexpected response to ${cmd}`);
+      const result = interpretResponse(response);
+      if (result.value === undefined) {
+        setCommandFeedback({type: "error", text: I18n.get(result.error ?? 'Device command failed')});
+        return null;
       }
-      setCommandFeedback({type: "success", text: I18n.get('Device command sent')});
-      return responseData;
+      setCommandFeedback({type: "success", text: I18n.get(result.message ?? 'Device command sent')});
+      return result.value;
     } catch {
       if (controller.signal.aborted || !mountedRef.current) return null;
       setCommandFeedback({type: "error", text: I18n.get('Device command failed')});
@@ -171,14 +192,16 @@ export default function TabMain(props) {
   }, []);
 
   const setDiode = async () => {
-    const response = await runDeviceCommand('~L'+(!settings.Diode? "1":"0"), SWITCH_RESPONSE.diode);
+    const cmd = '~L'+(!settings.Diode? "1":"0");
+    const response = await runDeviceCommand(cmd, expectEcho(cmd));
     if (response !== null) {
       setSettings({Diode: response[2] === "1"});
     }
   };
 
   const setPause = async () => {
-    const response = await runDeviceCommand('~P'+(!settings.Pause? "1":"0"), SWITCH_RESPONSE.pause);
+    const cmd = '~P'+(!settings.Pause? "1":"0");
+    const response = await runDeviceCommand(cmd, expectPauseCommand(cmd));
     if (response !== null) {
       setSettings({Pause: response[2] === "1"});
     }
@@ -186,7 +209,7 @@ export default function TabMain(props) {
 
   const runConfirmedCommand = (cmd) => {
     if (!window.confirm(I18n.get(COMMAND_CONFIRMATIONS[cmd]))) return;
-    void runDeviceCommand(cmd, COMMAND_RESPONSES[cmd]);
+    void runDeviceCommand(cmd, expectPowerCommand(cmd));
   };
 
   const statusText = present ? I18n.get('Device connected') : I18n.get('Device disconnected');

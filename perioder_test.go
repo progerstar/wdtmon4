@@ -81,3 +81,19 @@ func TestPingUsesConfiguredTCPPort(t *testing.T) {
 		t.Fatalf("ping did not connect to configured TCP endpoint: %v", err)
 	}
 }
+
+func TestParseTemperature(t *testing.T) {
+	if got, err := parseTemperature("~G0235"); err != nil || !got.Valid || got.Float64 != 23.5 {
+		t.Fatalf("parseTemperature(~G0235) = %+v, %v; want 23.5", got, err)
+	}
+	for _, response := range []string{"~GEEEE", "~GFFFF", "~GI001", "~GO000"} {
+		if got, err := parseTemperature(response); err != nil || got.Valid {
+			t.Errorf("parseTemperature(%q) = %+v, %v; want invalid without error", response, got, err)
+		}
+	}
+	for _, response := range []string{"Invalid", "~G12x4"} {
+		if got, err := parseTemperature(response); err == nil || got.Valid {
+			t.Errorf("parseTemperature(%q) = %+v, %v; want invalid with error", response, got, err)
+		}
+	}
+}

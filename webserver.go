@@ -271,8 +271,15 @@ func (ws *WebServer) executeCommand(c *fiber.Ctx) error {
 	default:
 		res, err := sendrecv(context.Background(), cmd, ws.serChan)
 		if err != nil {
+			if errors.Is(err, errNoResponse) && unacknowledgedCommands[cmd] {
+				return c.SendStatus(fiber.StatusAccepted)
+			}
+			if errors.Is(err, errPortUnavailable) {
+				// The UI polls every few seconds; the serial worker logs the outage once.
+				return c.SendStatus(fiber.StatusServiceUnavailable)
+			}
 			log.Printf("Command %s failed: %v", cmd, err)
-			if errors.Is(err, context.DeadlineExceeded) {
+			if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, errNoResponse) {
 				return c.SendStatus(fiber.StatusGatewayTimeout)
 			}
 			return c.SendStatus(fiber.StatusInternalServerError)
@@ -280,6 +287,11 @@ func (ws *WebServer) executeCommand(c *fiber.Ctx) error {
 		return c.SendString(res)
 	}
 }
+
+// unacknowledgedCommands are executed without an echo: the firmware answers
+// them only with Busy (a ~M command is pending) or Invalid. Silence after a
+// complete write is reported as 202 Accepted.
+var unacknowledgedCommands = map[string]bool{"~T1": true, "~T2": true, "~T3": true}
 
 func (ws *WebServer) getProcessList(c *fiber.Ctx) error {
 	processList, err := ps.Processes()

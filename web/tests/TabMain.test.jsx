@@ -130,6 +130,72 @@ describe('TabMain device controls', () => {
     );
   });
 
+  const mockDevice = (responses) => {
+    axios.post.mockImplementation((url) => {
+      switch (url) {
+        case '/cmd/~I': return Promise.resolve({data: '~IWatchDog'});
+        case '/cmd/~U': return Promise.resolve({data: '~A'});
+        case '/cmd/~G': return Promise.resolve({data: '23.5'});
+        default:
+          if (Object.hasOwn(responses, url)) return Promise.resolve(responses[url]);
+          return Promise.reject(new Error(`unexpected URL: ${url}`));
+      }
+    });
+  };
+
+  test('accepts an unacknowledged power command', async () => {
+    mockDevice({'/cmd/~T1': {status: 202, data: 'Accepted'}});
+
+    render(<TabMain settings={settings} setSettings={vi.fn()} setPresentExt={vi.fn()} />);
+
+    const resetButton = screen.getByRole('button', {name: 'Reset'});
+    await waitFor(() => expect(resetButton).toBeEnabled());
+    fireEvent.click(resetButton);
+
+    expect(await screen.findByText('Device command sent')).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  test('reports a busy device for a power command', async () => {
+    mockDevice({'/cmd/~T2': {status: 200, data: 'Busy'}});
+
+    render(<TabMain settings={settings} setSettings={vi.fn()} setPresentExt={vi.fn()} />);
+
+    const powerButton = screen.getByRole('button', {name: 'Power'});
+    await waitFor(() => expect(powerButton).toBeEnabled());
+    fireEvent.click(powerButton);
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Device is busy');
+  });
+
+  test('resumes heartbeats when the device timer is off', async () => {
+    const setSettings = vi.fn();
+    mockDevice({'/cmd/~P0': {status: 200, data: 'Invalid'}});
+
+    render(<TabMain settings={{...settings, Pause: true}} setSettings={setSettings} setPresentExt={vi.fn()} />);
+
+    const pauseToggle = screen.getByRole('checkbox', {name: 'Pause'});
+    await waitFor(() => expect(pauseToggle).toBeEnabled());
+    fireEvent.click(pauseToggle);
+
+    await waitFor(() => expect(setSettings).toHaveBeenCalledWith({Pause: false}));
+    expect(screen.getByText('Heartbeat resumed. The device timer is off.')).toBeInTheDocument();
+  });
+
+  test('does not pause when the device timer is off', async () => {
+    const setSettings = vi.fn();
+    mockDevice({'/cmd/~P1': {status: 200, data: 'Invalid'}});
+
+    render(<TabMain settings={settings} setSettings={setSettings} setPresentExt={vi.fn()} />);
+
+    const pauseToggle = screen.getByRole('checkbox', {name: 'Pause'});
+    await waitFor(() => expect(pauseToggle).toBeEnabled());
+    fireEvent.click(pauseToggle);
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('The device timer is off. There is nothing to pause.');
+    expect(setSettings).not.toHaveBeenCalled();
+  });
+
   test('rejects a malformed switch response without changing settings', async () => {
     const setSettings = vi.fn();
     axios.post.mockImplementation((url) => {

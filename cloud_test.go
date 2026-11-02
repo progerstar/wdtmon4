@@ -251,11 +251,11 @@ func TestBlockedCloudDoesNotDelayHeartbeat(t *testing.T) {
 					case heartbeatSeen <- time.Now():
 					default:
 					}
-					request.respond("~A")
+					request.respond(serialResult{response: "~A"})
 				case "~G":
-					request.respond("~G0235")
+					request.respond(serialResult{response: "~G0235"})
 				default:
-					request.respond("")
+					request.respond(serialResult{err: errNoResponse})
 				}
 			}
 		}
